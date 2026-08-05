@@ -50,6 +50,10 @@ func virtualMachine(
 	preferenceKind,
 	osType,
 	diskBus string,
+	cpuSockets,
+	cpuCores,
+	cpuThreads uint32,
+	memory string,
 	networks []Network) *v1.VirtualMachine {
 	var disks []v1.Disk
 	var volumes []v1.Volume
@@ -79,7 +83,7 @@ func virtualMachine(
 		vmNetworks[i], vmInterfaces[i] = convertToNetwork(n)
 	}
 
-	return &v1.VirtualMachine{
+	vm := &v1.VirtualMachine{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: v1.GroupVersion.String(),
 			Kind:       "VirtualMachine",
@@ -89,14 +93,6 @@ func virtualMachine(
 		},
 		Spec: v1.VirtualMachineSpec{
 			RunStrategy: ptr.To(v1.RunStrategyAlways),
-			Instancetype: &v1.InstancetypeMatcher{
-				Kind: instanceTypeKind,
-				Name: instanceType,
-			},
-			Preference: &v1.PreferenceMatcher{
-				Kind: preferenceKind,
-				Name: preferenceName,
-			},
 			DataVolumeTemplates: []v1.DataVolumeTemplateSpec{
 				{
 					ObjectMeta: metav1.ObjectMeta{
@@ -131,6 +127,40 @@ func virtualMachine(
 			},
 		},
 	}
+
+	// Sizing is expressed either via an instancetype matcher OR via explicit
+	// CPU/memory on the domain. KubeVirt forbids setting both at once.
+	if instanceType != "" {
+		vm.Spec.Instancetype = &v1.InstancetypeMatcher{
+			Kind: instanceTypeKind,
+			Name: instanceType,
+		}
+	} else {
+		if cpuSockets > 0 || cpuCores > 0 || cpuThreads > 0 {
+			vm.Spec.Template.Spec.Domain.CPU = &v1.CPU{
+				Sockets: cpuSockets,
+				Cores:   cpuCores,
+				Threads: cpuThreads,
+			}
+		}
+		if memory != "" {
+			vm.Spec.Template.Spec.Domain.Memory = &v1.Memory{
+				Guest: ptr.To(resource.MustParse(memory)),
+			}
+		}
+	}
+
+	// The preference is independent of sizing (it drives firmware, bus, and
+	// device defaults such as Win11's UEFI + secure boot + TPM), so keep it
+	// whenever one is provided.
+	if preferenceName != "" {
+		vm.Spec.Preference = &v1.PreferenceMatcher{
+			Kind: preferenceKind,
+			Name: preferenceName,
+		}
+	}
+
+	return vm
 }
 
 func cloneVolume(name, namespace, diskSize string) *cdiv1.DataVolume {
@@ -165,17 +195,25 @@ func cloneVolume(name, namespace, diskSize string) *cdiv1.DataVolume {
 }
 
 func sourceVolume(name, namespace, instanceType, preferenceName string) *cdiv1.DataSource {
+	// Only advertise default-instancetype/default-preference labels that are
+	// actually set. When the VM is sized via explicit cpu/memory there is no
+	// instancetype to record.
+	labels := map[string]string{}
+	if instanceType != "" {
+		labels["instancetype.kubevirt.io/default-instancetype"] = instanceType
+	}
+	if preferenceName != "" {
+		labels["instancetype.kubevirt.io/default-preference"] = preferenceName
+	}
+
 	return &cdiv1.DataSource{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: cdiv1.CDIGroupVersionKind.GroupVersion().String(),
 			Kind:       "DataSource",
 		},
 		ObjectMeta: metav1.ObjectMeta{
-			Name: name,
-			Labels: map[string]string{
-				"instancetype.kubevirt.io/default-instancetype": instanceType,
-				"instancetype.kubevirt.io/default-preference":   preferenceName,
-			},
+			Name:   name,
+			Labels: labels,
 		},
 		Spec: cdiv1.DataSourceSpec{
 			Source: cdiv1.DataSourceSource{

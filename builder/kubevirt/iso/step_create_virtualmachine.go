@@ -34,6 +34,10 @@ func (s *StepCreateVirtualMachine) Run(ctx context.Context, state multistep.Stat
 	preferenceKind := s.Config.PreferenceKind
 	osType := s.Config.OperatingSystemType
 	diskBus := s.Config.DiskBus
+	cpuSockets := s.Config.CPUSockets
+	cpuCores := s.Config.CPUCores
+	cpuThreads := s.Config.CPUThreads
+	memory := s.Config.Memory
 	networks := s.Config.Networks
 
 	if osType == "" || (osType != "linux" && osType != "windows") {
@@ -51,6 +55,10 @@ func (s *StepCreateVirtualMachine) Run(ctx context.Context, state multistep.Stat
 		preferenceKind,
 		osType,
 		diskBus,
+		cpuSockets,
+		cpuCores,
+		cpuThreads,
+		memory,
 		networks)
 
 	ui.Sayf("Creating a new temporary VirtualMachine (%s/%s)...", namespace, name)

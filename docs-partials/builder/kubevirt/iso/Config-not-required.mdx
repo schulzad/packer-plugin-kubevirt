@@ -1,7 +1,28 @@
 <!-- Code generated from the comments of the Config struct in builder/kubevirt/iso/config.go; DO NOT EDIT MANUALLY -->
 
+- `instance_type` (string) - InstanceType is the name of the InstanceType resource to use in the temporary VM.
+  Mutually exclusive with cpu/memory: set either an instance_type or explicit
+  cpu/memory, but not both. KubeVirt forbids combining an instancetype matcher
+  with explicit CPU/memory on the VM domain.
+
 - `instance_type_kind` (string) - InstanceTypeKind is the kind of the InstanceType resource to use in the temporary VM.
   Other supported value is "virtualmachineclusterinstancetype".
+
+- `cpu_sockets` (uint32) - CPUSockets is the number of guest CPU sockets to assign to the temporary VM.
+  Only used when instance_type is not set. Note that some preferences carry a
+  CPU requirement bound to a specific topology dimension (for example the
+  windows.11 preference uses preferSockets and requires >= 2 vCPU as sockets),
+  so set the dimension the chosen preference expects.
+
+- `cpu_cores` (uint32) - CPUCores is the number of guest CPU cores per socket to assign to the
+  temporary VM. Only used when instance_type is not set.
+
+- `cpu_threads` (uint32) - CPUThreads is the number of guest CPU threads per core to assign to the
+  temporary VM. Only used when instance_type is not set.
+
+- `memory` (string) - Memory is the amount of guest memory to assign to the temporary VM,
+  expressed as a Kubernetes quantity (e.g. "16Gi").
+  Only used when instance_type is not set.
 
 - `preference_kind` (string) - PreferenceKind is the kind of the Preference resource to use in the temporary VM.
   Other supported value is "virtualmachineclusterpreference".

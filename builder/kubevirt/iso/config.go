@@ -74,10 +74,29 @@ type Config struct {
 	// DiskSize is the size of the root disk to of the temporary VM.
 	DiskSize string `mapstructure:"disk_size" required:"true"`
 	// InstanceType is the name of the InstanceType resource to use in the temporary VM.
-	InstanceType string `mapstructure:"instance_type" required:"true"`
+	// Mutually exclusive with cpu/memory: set either an instance_type or explicit
+	// cpu/memory, but not both. KubeVirt forbids combining an instancetype matcher
+	// with explicit CPU/memory on the VM domain.
+	InstanceType string `mapstructure:"instance_type" required:"false"`
 	// InstanceTypeKind is the kind of the InstanceType resource to use in the temporary VM.
 	// Other supported value is "virtualmachineclusterinstancetype".
 	InstanceTypeKind string `mapstructure:"instance_type_kind" required:"false"`
+	// CPUSockets is the number of guest CPU sockets to assign to the temporary VM.
+	// Only used when instance_type is not set. Note that some preferences carry a
+	// CPU requirement bound to a specific topology dimension (for example the
+	// windows.11 preference uses preferSockets and requires >= 2 vCPU as sockets),
+	// so set the dimension the chosen preference expects.
+	CPUSockets uint32 `mapstructure:"cpu_sockets" required:"false"`
+	// CPUCores is the number of guest CPU cores per socket to assign to the
+	// temporary VM. Only used when instance_type is not set.
+	CPUCores uint32 `mapstructure:"cpu_cores" required:"false"`
+	// CPUThreads is the number of guest CPU threads per core to assign to the
+	// temporary VM. Only used when instance_type is not set.
+	CPUThreads uint32 `mapstructure:"cpu_threads" required:"false"`
+	// Memory is the amount of guest memory to assign to the temporary VM,
+	// expressed as a Kubernetes quantity (e.g. "16Gi").
+	// Only used when instance_type is not set.
+	Memory string `mapstructure:"memory" required:"false"`
 	// Preference is the name of the Preference resource to use in the temporary VM.
 	Preference string `mapstructure:"preference" required:"true"`
 	// PreferenceKind is the kind of the Preference resource to use in the temporary VM.
@@ -160,6 +179,17 @@ func (c *Config) Prepare(raws ...interface{}) ([]string, error) {
 
 	if c.DiskBus == "" {
 		c.DiskBus = "scsi"
+	}
+
+	// Sizing can come either from an instancetype OR from explicit cpu/memory,
+	// but never both: KubeVirt rejects a VM that carries both an instancetype
+	// matcher and explicit CPU/memory on its domain.
+	hasExplicitSizing := c.CPUSockets > 0 || c.CPUCores > 0 || c.CPUThreads > 0 || c.Memory != ""
+	if c.InstanceType != "" && hasExplicitSizing {
+		return nil, fmt.Errorf("instance_type cannot be combined with cpu_sockets/cpu_cores/cpu_threads/memory; set either instance_type or explicit cpu/memory")
+	}
+	if c.InstanceType == "" && c.Memory == "" {
+		return nil, fmt.Errorf("either instance_type or memory (with optional cpu_sockets/cpu_cores/cpu_threads) must be set")
 	}
 
 	for _, n := range c.Networks {

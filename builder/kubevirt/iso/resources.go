@@ -54,7 +54,8 @@ func virtualMachine(
 	cpuCores,
 	cpuThreads uint32,
 	memory string,
-	networks []Network) *v1.VirtualMachine {
+	networks []Network,
+	forwardPorts []v1.Port) *v1.VirtualMachine {
 	var disks []v1.Disk
 	var volumes []v1.Volume
 
@@ -80,7 +81,7 @@ func virtualMachine(
 	}
 
 	for i, n := range networks {
-		vmNetworks[i], vmInterfaces[i] = convertToNetwork(n)
+		vmNetworks[i], vmInterfaces[i] = convertToNetwork(n, forwardPorts)
 	}
 
 	vm := &v1.VirtualMachine{
@@ -373,7 +374,7 @@ func getWindowsVirtualMachineVolumes(name, isoVolumeName string) []v1.Volume {
 	}
 }
 
-func convertToNetwork(n Network) (v1.Network, v1.Interface) {
+func convertToNetwork(n Network, forwardPorts []v1.Port) (v1.Network, v1.Interface) {
 	vmNetwork := v1.Network{Name: n.Name}
 	vmInterface := v1.Interface{Name: n.Name}
 
@@ -385,6 +386,12 @@ func convertToNetwork(n Network) (v1.Network, v1.Interface) {
 			VMIPv6NetworkCIDR: n.Pod.VMIPv6NetworkCIDR,
 		}
 		vmInterface.InterfaceBindingMethod.Masquerade = &v1.InterfaceMasquerade{}
+		// KubeVirt masquerade only DNATs inbound ports that are explicitly
+		// declared on the interface. Without this, the communicator port
+		// (e.g. WinRM 5985 / SSH 22) never reaches the guest and the plugin's
+		// port-forward times out. Bridge/Multus expose all ports directly, so
+		// this is only required for the masquerade (pod) interface.
+		vmInterface.Ports = forwardPorts
 	case n.Multus != nil:
 		// Multus network, and bridge interface.
 		vmNetwork.NetworkSource.Multus = &v1.MultusNetwork{

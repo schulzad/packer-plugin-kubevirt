@@ -107,6 +107,12 @@ func virtualMachine(
 								},
 							},
 							AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+							// Request a Block volume so the VM disk gets the full disk_size.
+							// Without this, k8s defaults the PVC to Filesystem, which wraps
+							// the disk in an ext4 image; CDI's filesystem overhead then
+							// shrinks the usable virtual size well below disk_size (e.g. an
+							// 80Gi request yields a ~74Gi disk).
+							VolumeMode: ptr.To(corev1.PersistentVolumeBlock),
 						},
 						Source: &cdiv1.DataVolumeSource{
 							Blank: &cdiv1.DataVolumeBlankImage{},
@@ -190,6 +196,9 @@ func cloneVolume(name, namespace, diskSize string) *cdiv1.DataVolume {
 					},
 				},
 				AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+				// Match the temporary VM's rootdisk: Block mode preserves the full
+				// disk_size on the cloned golden volume (Filesystem mode would shrink it).
+				VolumeMode: ptr.To(corev1.PersistentVolumeBlock),
 			},
 		},
 	}

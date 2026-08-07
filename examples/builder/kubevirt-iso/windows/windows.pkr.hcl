@@ -5,7 +5,7 @@ packer {
   required_plugins {
     kubevirt = {
       source  = "github.com/hashicorp/kubevirt"
-      version = ">= 0.8.0"
+      version = ">= 0.9.1" # cpu_sockets/cpu_cores/cpu_threads/memory require this fork
     }
   }
 }
@@ -24,11 +24,23 @@ source "kubevirt-iso" "windows" {
   # ISO configuration
   iso_volume_name = "windows-11-x86-64-iso"
 
-  # VM type and preferences
-  disk_size     = "64Gi"
-  instance_type = "u1.large"
-  preference    = "windows.11.virtio"
-  os_type       = "windows"
+  # VM sizing and guest profile.
+  #
+  # Explicit CPU topology + memory instead of an instance_type: some clusters
+  # (e.g. Harvester) reject the instance_type-only VM the plugin used to emit,
+  # and KubeVirt forbids combining an instance_type with explicit cpu/memory --
+  # so set one path or the other. The windows.11 preference (kept for UEFI +
+  # secure boot + TPM 2.0 + bus defaults) uses preferSockets and requires
+  # >= 2 vCPU placed on sockets, so cpu_sockets = 2 (not cpu_cores) satisfies it.
+  disk_size   = "64Gi"
+  cpu_sockets = 2
+  cpu_cores   = 1
+  cpu_threads = 1
+  memory      = "8Gi"
+
+  preference      = "windows.11.virtio"
+  preference_kind = "virtualmachineclusterpreference" # or "virtualmachinepreference"
+  os_type         = "windows"
 
   # Files to include in the ISO installation
   media_files = [

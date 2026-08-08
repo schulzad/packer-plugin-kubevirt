@@ -35,6 +35,7 @@ func (s *StepCreateVirtualMachine) Run(ctx context.Context, state multistep.Stat
 	preferenceKind := s.Config.PreferenceKind
 	osType := s.Config.OperatingSystemType
 	diskBus := s.Config.DiskBus
+	diskInterface := s.Config.DiskInterface
 	cpuSockets := s.Config.CPUSockets
 	cpuCores := s.Config.CPUCores
 	cpuThreads := s.Config.CPUThreads
@@ -75,6 +76,7 @@ func (s *StepCreateVirtualMachine) Run(ctx context.Context, state multistep.Stat
 		preferenceKind,
 		osType,
 		diskBus,
+		diskInterface,
 		cpuSockets,
 		cpuCores,
 		cpuThreads,

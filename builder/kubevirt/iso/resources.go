@@ -49,7 +49,8 @@ func virtualMachine(
 	instanceTypeKind,
 	preferenceKind,
 	osType,
-	diskBus string,
+	diskBus,
+	diskInterface string,
 	cpuSockets,
 	cpuCores,
 	cpuThreads uint32,
@@ -71,12 +72,12 @@ func virtualMachine(
 	}
 
 	if osType == "linux" {
-		disks = getLinuxVirtualMachineDisks(diskBus)
+		disks = getLinuxVirtualMachineDisks(diskBus, diskInterface)
 		volumes = getLinuxVirtualMachineVolumes(name, isoVolumeName)
 	}
 
 	if osType == "windows" {
-		disks = getWindowsVirtualMachineDisks()
+		disks = getWindowsVirtualMachineDisks(diskInterface)
 		volumes = getWindowsVirtualMachineVolumes(name, isoVolumeName)
 	}
 
@@ -236,7 +237,7 @@ func sourceVolume(name, namespace, instanceType, preferenceName string) *cdiv1.D
 	}
 }
 
-func getLinuxVirtualMachineDisks(diskBus string) []v1.Disk {
+func getLinuxVirtualMachineDisks(diskBus, diskInterface string) []v1.Disk {
 	rootdisk := uint(1)
 	cdrom := uint(2)
 	oemdrv := uint(3)
@@ -265,7 +266,9 @@ func getLinuxVirtualMachineDisks(diskBus string) []v1.Disk {
 		{
 			Name: "rootdisk",
 			DiskDevice: v1.DiskDevice{
-				Disk: &v1.DiskTarget{},
+				Disk: &v1.DiskTarget{
+					Bus: v1.DiskBus(diskInterface),
+				},
 			},
 			BootOrder: &rootdisk,
 		},
@@ -304,7 +307,7 @@ func getLinuxVirtualMachineVolumes(name, isoVolumeName string) []v1.Volume {
 	}
 }
 
-func getWindowsVirtualMachineDisks() []v1.Disk {
+func getWindowsVirtualMachineDisks(diskInterface string) []v1.Disk {
 	rootdisk := uint(1)
 	cdrom := uint(2)
 
@@ -321,7 +324,9 @@ func getWindowsVirtualMachineDisks() []v1.Disk {
 		{
 			Name: "rootdisk",
 			DiskDevice: v1.DiskDevice{
-				Disk: &v1.DiskTarget{},
+				Disk: &v1.DiskTarget{
+					Bus: v1.DiskBus(diskInterface),
+				},
 			},
 			BootOrder: &rootdisk,
 		},

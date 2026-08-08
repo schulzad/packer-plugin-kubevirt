@@ -105,6 +105,10 @@ type Config struct {
 	// OperatingSystemType is the type of operating system to install.
 	// Supported values are "linux" and "windows". Default is "linux".
 	OperatingSystemType string `mapstructure:"os_type" required:"false"`
+	// DiskInterface is the bus used by the primary root disk.
+	// Supported values are "virtio", "sata", "scsi", and "usb".
+	// If unset, KubeVirt or the selected preference chooses the bus.
+	DiskInterface string `mapstructure:"disk_interface" required:"false"`
 	// DiskBus is the bus type to use for CD-ROM disk devices on the temporary VM.
 	// Supported values are "scsi", "sata", and "virtio".
 	// Defaults to "scsi", which is compatible with both x86 and arm64 architectures.
@@ -179,6 +183,12 @@ func (c *Config) Prepare(raws ...interface{}) ([]string, error) {
 
 	if c.DiskBus == "" {
 		c.DiskBus = "scsi"
+	}
+
+	switch c.DiskInterface {
+	case "", "virtio", "sata", "scsi", "usb":
+	default:
+		return nil, fmt.Errorf("disk_interface must be one of virtio, sata, scsi, or usb")
 	}
 
 	// Sizing can come either from an instancetype OR from explicit cpu/memory,

@@ -117,6 +117,33 @@ var _ = Describe("StepCreateVirtualMachine", func() {
 			Expect(action).To(Equal(multistep.ActionContinue))
 		})
 
+		It("sets the configured root disk interface on a Windows VM", func() {
+			step.Config.OperatingSystemType = "windows"
+			step.Config.DiskInterface = "virtio"
+
+			vmClient.Fake.PrependReactor("create", "virtualmachines", func(action k8stesting.Action) (bool, runtime.Object, error) {
+				create := action.(k8stesting.CreateAction)
+				obj := create.GetObject().(*v1.VirtualMachine)
+
+				var rootDisk *v1.Disk
+				for i := range obj.Spec.Template.Spec.Domain.Devices.Disks {
+					if obj.Spec.Template.Spec.Domain.Devices.Disks[i].Name == "rootdisk" {
+						rootDisk = &obj.Spec.Template.Spec.Domain.Devices.Disks[i]
+						break
+					}
+				}
+				Expect(rootDisk).NotTo(BeNil())
+				Expect(rootDisk.DiskDevice.Disk).NotTo(BeNil())
+				Expect(rootDisk.DiskDevice.Disk.Bus).To(Equal(v1.DiskBusVirtio))
+
+				obj.Status.Ready = true
+				return false, obj, nil
+			})
+
+			action := step.Run(context.Background(), state)
+			Expect(action).To(Equal(multistep.ActionContinue))
+		})
+
 		It("halts when VM creation fails", func() {
 			// Inject error into fake client
 			vmClient.Fake.PrependReactor("create", "virtualmachines", func(action k8stesting.Action) (bool, runtime.Object, error) {

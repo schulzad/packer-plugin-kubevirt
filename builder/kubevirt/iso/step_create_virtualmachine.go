@@ -14,6 +14,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 	ptr "k8s.io/utils/ptr"
 
+	v1 "kubevirt.io/api/core/v1"
 	"kubevirt.io/client-go/kubecli"
 )
 
@@ -34,11 +35,35 @@ func (s *StepCreateVirtualMachine) Run(ctx context.Context, state multistep.Stat
 	preferenceKind := s.Config.PreferenceKind
 	osType := s.Config.OperatingSystemType
 	diskBus := s.Config.DiskBus
+	diskInterface := s.Config.DiskInterface
+	cpuSockets := s.Config.CPUSockets
+	cpuCores := s.Config.CPUCores
+	cpuThreads := s.Config.CPUThreads
+	memory := s.Config.Memory
 	networks := s.Config.Networks
 
 	if osType == "" || (osType != "linux" && osType != "windows") {
 		ui.Errorf("OS type of '%s' is not supported, set 'linux' or 'windows'.", osType)
 		return multistep.ActionHalt
+	}
+
+	// KubeVirt masquerade forwards only explicitly declared ports to the guest,
+	// so expose the active communicator's remote port. Without this the plugin's
+	// port-forward can never reach WinRM/SSH inside the VM on a pod network.
+	var forwardPorts []v1.Port
+	switch s.Config.Communicator {
+	case "winrm":
+		port := s.Config.WinRMRemotePort
+		if port == 0 {
+			port = 5985
+		}
+		forwardPorts = []v1.Port{{Name: "winrm", Port: int32(port), Protocol: "TCP"}}
+	case "ssh":
+		port := s.Config.SSHRemotePort
+		if port == 0 {
+			port = 22
+		}
+		forwardPorts = []v1.Port{{Name: "ssh", Port: int32(port), Protocol: "TCP"}}
 	}
 
 	virtualMachine := virtualMachine(
@@ -51,7 +76,13 @@ func (s *StepCreateVirtualMachine) Run(ctx context.Context, state multistep.Stat
 		preferenceKind,
 		osType,
 		diskBus,
-		networks)
+		diskInterface,
+		cpuSockets,
+		cpuCores,
+		cpuThreads,
+		memory,
+		networks,
+		forwardPorts)
 
 	ui.Sayf("Creating a new temporary VirtualMachine (%s/%s)...", namespace, name)
 

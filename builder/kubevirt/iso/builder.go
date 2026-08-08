@@ -77,6 +77,10 @@ func (b *Builder) Run(ctx context.Context, ui packer.Ui, hook packer.Hook) (pack
 			Config: b.config,
 			Client: b.client,
 		},
+		&StepValidateBootableVolume{
+			Config: b.config,
+			Client: b.client,
+		},
 		&StepCopyMediaFiles{
 			Config: b.config,
 			Client: b.clientset,

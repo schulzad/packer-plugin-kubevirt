@@ -23,11 +23,16 @@ type FlatConfig struct {
 	Namespace               *string           `mapstructure:"namespace" required:"true" cty:"namespace" hcl:"namespace"`
 	IsoVolumeName           *string           `mapstructure:"iso_volume_name" required:"true" cty:"iso_volume_name" hcl:"iso_volume_name"`
 	DiskSize                *string           `mapstructure:"disk_size" required:"true" cty:"disk_size" hcl:"disk_size"`
-	InstanceType            *string           `mapstructure:"instance_type" required:"true" cty:"instance_type" hcl:"instance_type"`
+	InstanceType            *string           `mapstructure:"instance_type" required:"false" cty:"instance_type" hcl:"instance_type"`
 	InstanceTypeKind        *string           `mapstructure:"instance_type_kind" required:"false" cty:"instance_type_kind" hcl:"instance_type_kind"`
+	CPUSockets              *uint32           `mapstructure:"cpu_sockets" required:"false" cty:"cpu_sockets" hcl:"cpu_sockets"`
+	CPUCores                *uint32           `mapstructure:"cpu_cores" required:"false" cty:"cpu_cores" hcl:"cpu_cores"`
+	CPUThreads              *uint32           `mapstructure:"cpu_threads" required:"false" cty:"cpu_threads" hcl:"cpu_threads"`
+	Memory                  *string           `mapstructure:"memory" required:"false" cty:"memory" hcl:"memory"`
 	Preference              *string           `mapstructure:"preference" required:"true" cty:"preference" hcl:"preference"`
 	PreferenceKind          *string           `mapstructure:"preference_kind" required:"false" cty:"preference_kind" hcl:"preference_kind"`
 	OperatingSystemType     *string           `mapstructure:"os_type" required:"false" cty:"os_type" hcl:"os_type"`
+	DiskInterface           *string           `mapstructure:"disk_interface" required:"false" cty:"disk_interface" hcl:"disk_interface"`
 	DiskBus                 *string           `mapstructure:"disk_bus" required:"false" cty:"disk_bus" hcl:"disk_bus"`
 	Networks                []FlatNetwork     `mapstructure:"networks" required:"false" cty:"networks" hcl:"networks"`
 	MediaFiles              []string          `mapstructure:"media_files" required:"false" cty:"media_files" hcl:"media_files"`
@@ -78,9 +83,14 @@ func (*FlatConfig) HCL2Spec() map[string]hcldec.Spec {
 		"disk_size":                  &hcldec.AttrSpec{Name: "disk_size", Type: cty.String, Required: false},
 		"instance_type":              &hcldec.AttrSpec{Name: "instance_type", Type: cty.String, Required: false},
 		"instance_type_kind":         &hcldec.AttrSpec{Name: "instance_type_kind", Type: cty.String, Required: false},
+		"cpu_sockets":                &hcldec.AttrSpec{Name: "cpu_sockets", Type: cty.Number, Required: false},
+		"cpu_cores":                  &hcldec.AttrSpec{Name: "cpu_cores", Type: cty.Number, Required: false},
+		"cpu_threads":                &hcldec.AttrSpec{Name: "cpu_threads", Type: cty.Number, Required: false},
+		"memory":                     &hcldec.AttrSpec{Name: "memory", Type: cty.String, Required: false},
 		"preference":                 &hcldec.AttrSpec{Name: "preference", Type: cty.String, Required: false},
 		"preference_kind":            &hcldec.AttrSpec{Name: "preference_kind", Type: cty.String, Required: false},
 		"os_type":                    &hcldec.AttrSpec{Name: "os_type", Type: cty.String, Required: false},
+		"disk_interface":             &hcldec.AttrSpec{Name: "disk_interface", Type: cty.String, Required: false},
 		"disk_bus":                   &hcldec.AttrSpec{Name: "disk_bus", Type: cty.String, Required: false},
 		"networks":                   &hcldec.BlockListSpec{TypeName: "networks", Nested: hcldec.ObjectSpec((*FlatNetwork)(nil).HCL2Spec())},
 		"media_files":                &hcldec.AttrSpec{Name: "media_files", Type: cty.List(cty.String), Required: false},

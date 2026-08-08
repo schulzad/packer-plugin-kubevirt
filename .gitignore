@@ -8,3 +8,5 @@ dist/*
 .docs/*
 docs.zip
 vendor/*
+# Local dev kubeconfig (contains a live cluster token) — never commit.
+local.yaml

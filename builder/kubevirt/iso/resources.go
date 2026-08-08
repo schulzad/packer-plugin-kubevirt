@@ -49,8 +49,14 @@ func virtualMachine(
 	instanceTypeKind,
 	preferenceKind,
 	osType,
-	diskBus string,
-	networks []Network) *v1.VirtualMachine {
+	diskBus,
+	diskInterface string,
+	cpuSockets,
+	cpuCores,
+	cpuThreads uint32,
+	memory string,
+	networks []Network,
+	forwardPorts []v1.Port) *v1.VirtualMachine {
 	var disks []v1.Disk
 	var volumes []v1.Volume
 
@@ -66,20 +72,20 @@ func virtualMachine(
 	}
 
 	if osType == "linux" {
-		disks = getLinuxVirtualMachineDisks(diskBus)
+		disks = getLinuxVirtualMachineDisks(diskBus, diskInterface)
 		volumes = getLinuxVirtualMachineVolumes(name, isoVolumeName)
 	}
 
 	if osType == "windows" {
-		disks = getWindowsVirtualMachineDisks()
+		disks = getWindowsVirtualMachineDisks(diskInterface)
 		volumes = getWindowsVirtualMachineVolumes(name, isoVolumeName)
 	}
 
 	for i, n := range networks {
-		vmNetworks[i], vmInterfaces[i] = convertToNetwork(n)
+		vmNetworks[i], vmInterfaces[i] = convertToNetwork(n, forwardPorts)
 	}
 
-	return &v1.VirtualMachine{
+	vm := &v1.VirtualMachine{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: v1.GroupVersion.String(),
 			Kind:       "VirtualMachine",
@@ -89,14 +95,6 @@ func virtualMachine(
 		},
 		Spec: v1.VirtualMachineSpec{
 			RunStrategy: ptr.To(v1.RunStrategyAlways),
-			Instancetype: &v1.InstancetypeMatcher{
-				Kind: instanceTypeKind,
-				Name: instanceType,
-			},
-			Preference: &v1.PreferenceMatcher{
-				Kind: preferenceKind,
-				Name: preferenceName,
-			},
 			DataVolumeTemplates: []v1.DataVolumeTemplateSpec{
 				{
 					ObjectMeta: metav1.ObjectMeta{
@@ -110,6 +108,12 @@ func virtualMachine(
 								},
 							},
 							AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+							// Request a Block volume so the VM disk gets the full disk_size.
+							// Without this, k8s defaults the PVC to Filesystem, which wraps
+							// the disk in an ext4 image; CDI's filesystem overhead then
+							// shrinks the usable virtual size well below disk_size (e.g. an
+							// 80Gi request yields a ~74Gi disk).
+							VolumeMode: ptr.To(corev1.PersistentVolumeBlock),
 						},
 						Source: &cdiv1.DataVolumeSource{
 							Blank: &cdiv1.DataVolumeBlankImage{},
@@ -131,6 +135,40 @@ func virtualMachine(
 			},
 		},
 	}
+
+	// Sizing is expressed either via an instancetype matcher OR via explicit
+	// CPU/memory on the domain. KubeVirt forbids setting both at once.
+	if instanceType != "" {
+		vm.Spec.Instancetype = &v1.InstancetypeMatcher{
+			Kind: instanceTypeKind,
+			Name: instanceType,
+		}
+	} else {
+		if cpuSockets > 0 || cpuCores > 0 || cpuThreads > 0 {
+			vm.Spec.Template.Spec.Domain.CPU = &v1.CPU{
+				Sockets: cpuSockets,
+				Cores:   cpuCores,
+				Threads: cpuThreads,
+			}
+		}
+		if memory != "" {
+			vm.Spec.Template.Spec.Domain.Memory = &v1.Memory{
+				Guest: ptr.To(resource.MustParse(memory)),
+			}
+		}
+	}
+
+	// The preference is independent of sizing (it drives firmware, bus, and
+	// device defaults such as Win11's UEFI + secure boot + TPM), so keep it
+	// whenever one is provided.
+	if preferenceName != "" {
+		vm.Spec.Preference = &v1.PreferenceMatcher{
+			Kind: preferenceKind,
+			Name: preferenceName,
+		}
+	}
+
+	return vm
 }
 
 func cloneVolume(name, namespace, diskSize string) *cdiv1.DataVolume {
@@ -159,23 +197,34 @@ func cloneVolume(name, namespace, diskSize string) *cdiv1.DataVolume {
 					},
 				},
 				AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+				// Match the temporary VM's rootdisk: Block mode preserves the full
+				// disk_size on the cloned golden volume (Filesystem mode would shrink it).
+				VolumeMode: ptr.To(corev1.PersistentVolumeBlock),
 			},
 		},
 	}
 }
 
 func sourceVolume(name, namespace, instanceType, preferenceName string) *cdiv1.DataSource {
+	// Only advertise default-instancetype/default-preference labels that are
+	// actually set. When the VM is sized via explicit cpu/memory there is no
+	// instancetype to record.
+	labels := map[string]string{}
+	if instanceType != "" {
+		labels["instancetype.kubevirt.io/default-instancetype"] = instanceType
+	}
+	if preferenceName != "" {
+		labels["instancetype.kubevirt.io/default-preference"] = preferenceName
+	}
+
 	return &cdiv1.DataSource{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: cdiv1.CDIGroupVersionKind.GroupVersion().String(),
 			Kind:       "DataSource",
 		},
 		ObjectMeta: metav1.ObjectMeta{
-			Name: name,
-			Labels: map[string]string{
-				"instancetype.kubevirt.io/default-instancetype": instanceType,
-				"instancetype.kubevirt.io/default-preference":   preferenceName,
-			},
+			Name:   name,
+			Labels: labels,
 		},
 		Spec: cdiv1.DataSourceSpec{
 			Source: cdiv1.DataSourceSource{
@@ -188,7 +237,7 @@ func sourceVolume(name, namespace, instanceType, preferenceName string) *cdiv1.D
 	}
 }
 
-func getLinuxVirtualMachineDisks(diskBus string) []v1.Disk {
+func getLinuxVirtualMachineDisks(diskBus, diskInterface string) []v1.Disk {
 	rootdisk := uint(1)
 	cdrom := uint(2)
 	oemdrv := uint(3)
@@ -217,7 +266,9 @@ func getLinuxVirtualMachineDisks(diskBus string) []v1.Disk {
 		{
 			Name: "rootdisk",
 			DiskDevice: v1.DiskDevice{
-				Disk: &v1.DiskTarget{},
+				Disk: &v1.DiskTarget{
+					Bus: v1.DiskBus(diskInterface),
+				},
 			},
 			BootOrder: &rootdisk,
 		},
@@ -256,7 +307,7 @@ func getLinuxVirtualMachineVolumes(name, isoVolumeName string) []v1.Volume {
 	}
 }
 
-func getWindowsVirtualMachineDisks() []v1.Disk {
+func getWindowsVirtualMachineDisks(diskInterface string) []v1.Disk {
 	rootdisk := uint(1)
 	cdrom := uint(2)
 
@@ -273,7 +324,9 @@ func getWindowsVirtualMachineDisks() []v1.Disk {
 		{
 			Name: "rootdisk",
 			DiskDevice: v1.DiskDevice{
-				Disk: &v1.DiskTarget{},
+				Disk: &v1.DiskTarget{
+					Bus: v1.DiskBus(diskInterface),
+				},
 			},
 			BootOrder: &rootdisk,
 		},
@@ -335,7 +388,7 @@ func getWindowsVirtualMachineVolumes(name, isoVolumeName string) []v1.Volume {
 	}
 }
 
-func convertToNetwork(n Network) (v1.Network, v1.Interface) {
+func convertToNetwork(n Network, forwardPorts []v1.Port) (v1.Network, v1.Interface) {
 	vmNetwork := v1.Network{Name: n.Name}
 	vmInterface := v1.Interface{Name: n.Name}
 
@@ -347,6 +400,12 @@ func convertToNetwork(n Network) (v1.Network, v1.Interface) {
 			VMIPv6NetworkCIDR: n.Pod.VMIPv6NetworkCIDR,
 		}
 		vmInterface.InterfaceBindingMethod.Masquerade = &v1.InterfaceMasquerade{}
+		// KubeVirt masquerade only DNATs inbound ports that are explicitly
+		// declared on the interface. Without this, the communicator port
+		// (e.g. WinRM 5985 / SSH 22) never reaches the guest and the plugin's
+		// port-forward times out. Bridge/Multus expose all ports directly, so
+		// this is only required for the masquerade (pod) interface.
+		vmInterface.Ports = forwardPorts
 	case n.Multus != nil:
 		// Multus network, and bridge interface.
 		vmNetwork.NetworkSource.Multus = &v1.MultusNetwork{

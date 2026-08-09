@@ -17,37 +17,43 @@ variable "kube_config" {
 
 source "kubevirt-iso" "fedora" {
   # Kubernetes configuration
-  kube_config   = var.kube_config
-  name          = "fedora-42-rand-85"
-  namespace     = "images"
+  kube_config = var.kube_config
+  name        = "fedora-44"
+  namespace   = "images"
 
-  # ISO configuration
-  iso_volume_name = "fedora-42-x86-64-iso"
+  # CDI imports this URL from inside the cluster into a DataVolume the plugin
+  # manages and cleans up. Use the Server DVD (kickstart-friendly Anaconda
+  # installer); the Workstation Live image does not drive an automated ks install.
+  # iso_storage_size is the DataVolume capacity and must be >= the ISO (~3.6 GB
+  # here); CDI can't size it ahead of the download, so it's required for URL imports.
+  iso_url          = "https://download.fedoraproject.org/pub/fedora/linux/releases/44/Server/x86_64/iso/Fedora-Server-dvd-x86_64-44-1.7.iso"
+  iso_storage_size = "10Gi"
 
-  # VM type and preferences
-  disk_size          = "10Gi"
-  instance_type      = "o1.medium"
-  instance_type_kind = "virtualmachineclusterinstancetype" # or "virtualmachineinstancetype"
-  preference         = "fedora"
-  preference_kind    = "virtualmachineclusterpreference" # or "virtualmachinepreference"
-  os_type            = "linux"
+  # VM sizing and guest profile.
+  #
+  # Use explicit cpu/memory instead of an instance_type: Harvester rejects the
+  # instancetype-only VM, and KubeVirt forbids combining an instance_type with
+  # explicit cpu/memory -- so set one path or the other.
+  disk_size = "20Gi"
+  cpu_cores = 2
+  memory    = "4Gi"
 
-  # Default network configuration
+  preference      = "fedora"
+  preference_kind = "virtualmachineclusterpreference" # or "virtualmachinepreference"
+  os_type         = "linux"
+
+  # A pod (masquerade) network works everywhere and is what the SSH port-forward
+  # below rides on. Optionally attach a Multus bridge network as a second NIC.
   networks {
     name = "default"
-
     pod {}
   }
-
-  # Network configuration using Multus CNI
-  networks {
-    name = "net1"
-
-    multus {
-      networkName = "multus-01"
-      default = false
-    }
-  }
+  # networks {
+  #   name = "net1"
+  #   multus {
+  #     networkName = "kube-system/vlan1" # a cluster-specific NetworkAttachmentDefinition
+  #   }
+  # }
 
   # Files to include in the ISO installation
   media_files = [
@@ -62,17 +68,17 @@ source "kubevirt-iso" "fedora" {
     " inst.ks=hd:LABEL=OEMDRV:/ks.cfg", # Set kickstart file location
     "<leftCtrlOn>x<leftCtrlOff>"        # Boot with modified command line
   ]
-  boot_wait                 = "10s"     # Time to wait after boot starts
-  installation_wait_timeout = "15m"     # Timeout for installation to complete
+  boot_wait                 = "10s" # Time to wait after boot starts
+  installation_wait_timeout = "15m" # Timeout for installation to complete
 
   # SSH configuration
-  communicator      = "ssh"
-  ssh_host          = "127.0.0.1"
-  ssh_local_port    = 2020
-  ssh_remote_port   = 22
-  ssh_username      = "user"
-  ssh_password      = "root"
-  ssh_wait_timeout  = "20m"
+  communicator     = "ssh"
+  ssh_host         = "127.0.0.1"
+  ssh_local_port   = 2020
+  ssh_remote_port  = 22
+  ssh_username     = "user"
+  ssh_password     = "root"
+  ssh_wait_timeout = "20m"
 }
 
 build {

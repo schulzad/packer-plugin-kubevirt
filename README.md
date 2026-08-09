@@ -17,6 +17,7 @@ To get started, see the [Packer installation guide](https://developer.hashicorp.
 
 - **HCL Templating** – Use HashiCorp Configuration Language (HCL2) for defining infrastructure as code.
 - **ISO Installation** – Build VM golden images from ISO using the `kubevirt-iso` builder.
+- **ISO Sources** – Use an existing CDI DataVolume, or have CDI import a cluster-reachable ISO URL (the plugin manages and cleans up the DataVolume).
 - **ISO Media Files** – Embed additional files into installation process (e.g. `ks.cfg` or `unattend.xml`).
 - **Boot Command** – Automate the VM boot process using a set of commands (via a VNC connection).
 - **Integrated SSH/WinRM Access** – Allows VM provisioning and customization via SSH or WinRM.

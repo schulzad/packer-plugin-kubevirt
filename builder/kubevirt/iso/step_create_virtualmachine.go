@@ -5,11 +5,13 @@ package iso
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/hashicorp/packer-plugin-sdk/multistep"
 	"github.com/hashicorp/packer-plugin-sdk/packer"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
 	ptr "k8s.io/utils/ptr"
@@ -23,11 +25,22 @@ type StepCreateVirtualMachine struct {
 	Client kubecli.KubevirtClient
 }
 
+const (
+	stateTemporaryVMCreated  = "temporary_vm_created"
+	stateTemporaryVMDetached = "temporary_vm_detached"
+)
+
 func (s *StepCreateVirtualMachine) Run(ctx context.Context, state multistep.StateBag) multistep.StepAction {
 	ui := state.Get("ui").(packer.Ui)
 	name := s.Config.Name
 	namespace := s.Config.Namespace
-	isoVolumeName := s.Config.IsoVolumeName
+	isoVolumeName, ok := state.Get(stateISOVolumeName).(string)
+	if !ok || isoVolumeName == "" {
+		err := fmt.Errorf("resolved ISO DataVolume name not found in build state")
+		state.Put("error", err)
+		ui.Error(err.Error())
+		return multistep.ActionHalt
+	}
 	diskSize := s.Config.DiskSize
 	instanceTypeName := s.Config.InstanceType
 	instanceTypeKind := s.Config.InstanceTypeKind
@@ -88,11 +101,21 @@ func (s *StepCreateVirtualMachine) Run(ctx context.Context, state multistep.Stat
 
 	_, err := s.Client.VirtualMachine(namespace).Create(ctx, virtualMachine, metav1.CreateOptions{})
 	if err != nil {
+		_, getErr := s.Client.VirtualMachine(namespace).Get(ctx, name, metav1.GetOptions{})
+		if getErr == nil || !apierrors.IsNotFound(getErr) {
+			// An existing VM, or an ambiguous API result, may reference the
+			// staged ISO. Preserve it unless absence is confirmed.
+			state.Put(stateTemporaryVMCreated, true)
+		}
+		state.Put("error", err)
 		ui.Error(err.Error())
 		return multistep.ActionHalt
 	}
+	state.Put(stateTemporaryVMCreated, true)
 
 	if err := s.waitUntilVirtualMachineReady(ctx); err != nil {
+		state.Put("error", err)
+		ui.Error(err.Error())
 		return multistep.ActionHalt
 	}
 	return multistep.ActionContinue
@@ -111,9 +134,33 @@ func (s *StepCreateVirtualMachine) Cleanup(state multistep.StateBag) {
 
 	ui.Sayf("Deleting VirtualMachine (%s/%s)...", namespace, name)
 
-	_ = s.Client.VirtualMachine(namespace).Delete(context.Background(), name, metav1.DeleteOptions{
+	deleteErr := s.Client.VirtualMachine(namespace).Delete(context.Background(), name, metav1.DeleteOptions{
 		GracePeriodSeconds: ptr.To(int64(0)),
 	})
+	if deleteErr != nil && !apierrors.IsNotFound(deleteErr) {
+		ui.Errorf("Failed to delete VirtualMachine %s/%s: %v", namespace, name, deleteErr)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	if err := wait.PollUntilContextTimeout(ctx, 2*time.Second, 5*time.Minute, true, func(ctx context.Context) (bool, error) {
+		_, vmErr := s.Client.VirtualMachine(namespace).Get(ctx, name, metav1.GetOptions{})
+		_, vmiErr := s.Client.VirtualMachineInstance(namespace).Get(ctx, name, metav1.GetOptions{})
+		vmGone := apierrors.IsNotFound(vmErr)
+		vmiGone := apierrors.IsNotFound(vmiErr)
+		if vmErr != nil && !vmGone {
+			return false, vmErr
+		}
+		if vmiErr != nil && !vmiGone {
+			return false, vmiErr
+		}
+		return vmGone && vmiGone, nil
+	}); err != nil {
+		ui.Errorf("Timed out waiting for VirtualMachine %s/%s storage to detach: %v", namespace, name, err)
+		return
+	}
+	state.Put(stateTemporaryVMDetached, true)
 }
 
 func (s *StepCreateVirtualMachine) waitUntilVirtualMachineReady(ctx context.Context) error {

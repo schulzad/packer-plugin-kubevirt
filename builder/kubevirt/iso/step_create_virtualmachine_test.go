@@ -54,6 +54,7 @@ var _ = Describe("StepCreateVirtualMachine", func() {
 		}
 		state = new(multistep.BasicStateBag)
 		state.Put("ui", ui)
+		state.Put("iso_volume_name", "resolved-iso-vol")
 
 		kubeClient = fakek8sclient.NewSimpleClientset()
 		cdiClient = fakecdiclient.NewSimpleClientset()
@@ -67,6 +68,11 @@ var _ = Describe("StepCreateVirtualMachine", func() {
 			DoAndReturn(func(ns string) kubecli.VirtualMachineInterface {
 				return vmClient.KubevirtV1().VirtualMachines(ns)
 			}).AnyTimes()
+		kubecli.MockKubevirtClientInstance.EXPECT().
+			VirtualMachineInstance(gomock.Any()).
+			DoAndReturn(func(ns string) kubecli.VirtualMachineInstanceInterface {
+				return vmClient.KubevirtV1().VirtualMachineInstances(ns)
+			}).AnyTimes()
 		kubecli.MockKubevirtClientInstance.EXPECT().CdiClient().Return(cdiClient).AnyTimes()
 
 		virtClient, _ = kubecli.GetKubevirtClientFromClientConfig(nil)
@@ -75,7 +81,7 @@ var _ = Describe("StepCreateVirtualMachine", func() {
 			Config: iso.Config{
 				Name:                name,
 				Namespace:           namespace,
-				IsoVolumeName:       "iso-vol",
+				IsoVolumeName:       "configured-iso-vol",
 				DiskSize:            "1Gi",
 				InstanceType:        "cx1.medium",
 				InstanceTypeKind:    "instancetype.kubevirt.io",
@@ -108,6 +114,15 @@ var _ = Describe("StepCreateVirtualMachine", func() {
 			vmClient.Fake.PrependReactor("create", "virtualmachines", func(action k8stesting.Action) (bool, runtime.Object, error) {
 				create := action.(k8stesting.CreateAction)
 				obj := create.GetObject().(*v1.VirtualMachine)
+				foundCDROM := false
+				for _, volume := range obj.Spec.Template.Spec.Volumes {
+					if volume.Name == "cdrom" {
+						foundCDROM = true
+						Expect(volume.DataVolume).NotTo(BeNil())
+						Expect(volume.DataVolume.Name).To(Equal("resolved-iso-vol"))
+					}
+				}
+				Expect(foundCDROM).To(BeTrue())
 				// Simulate that VM is created and becomes Ready
 				obj.Status.Ready = true
 				return false, obj, nil
@@ -171,6 +186,7 @@ var _ = Describe("StepCreateVirtualMachine", func() {
 
 			action := step.Run(ctx, state)
 			Expect(action).To(Equal(multistep.ActionHalt))
+			Expect(state.Get("temporary_vm_created")).To(BeTrue())
 		})
 	})
 
@@ -195,6 +211,7 @@ var _ = Describe("StepCreateVirtualMachine", func() {
 
 			_, err = vmClient.KubevirtV1().VirtualMachines(namespace).Get(context.Background(), name, metav1.GetOptions{})
 			Expect(err).To(HaveOccurred()) // deleted
+			Expect(state.Get("temporary_vm_detached")).To(BeTrue())
 		})
 	})
 })

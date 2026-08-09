@@ -17,6 +17,7 @@ require (
 	github.com/hashicorp/hcl/v2 v2.24.0
 	github.com/hashicorp/packer-plugin-sdk v0.6.10
 	github.com/mitchellh/go-vnc v0.0.0-20150629162542-723ed9867aed
+	github.com/mitchellh/mapstructure v1.5.0
 	github.com/onsi/ginkgo/v2 v2.21.0
 	github.com/onsi/gomega v1.35.1
 	github.com/zclconf/go-cty v1.16.3
@@ -27,7 +28,7 @@ require (
 	k8s.io/utils v0.0.0-20241104100929-3ea5e8cea738
 	kubevirt.io/api v1.4.0
 	kubevirt.io/client-go v1.4.0
-	kubevirt.io/containerized-data-importer-api v1.60.3
+	kubevirt.io/containerized-data-importer-api v1.66.0
 )
 
 require (
@@ -142,7 +143,6 @@ require (
 	github.com/mitchellh/go-testing-interface v1.14.1 // indirect
 	github.com/mitchellh/go-wordwrap v1.0.1 // indirect
 	github.com/mitchellh/iochan v1.0.0 // indirect
-	github.com/mitchellh/mapstructure v1.5.0 // indirect
 	github.com/mitchellh/reflectwalk v1.0.0 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.2 // indirect

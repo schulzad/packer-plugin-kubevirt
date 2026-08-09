@@ -21,7 +21,16 @@ type FlatConfig struct {
 	KubeConfig              *string           `mapstructure:"kube_config" required:"true" cty:"kube_config" hcl:"kube_config"`
 	Name                    *string           `mapstructure:"name" required:"true" cty:"name" hcl:"name"`
 	Namespace               *string           `mapstructure:"namespace" required:"true" cty:"namespace" hcl:"namespace"`
-	IsoVolumeName           *string           `mapstructure:"iso_volume_name" required:"true" cty:"iso_volume_name" hcl:"iso_volume_name"`
+	IsoVolumeName           *string           `mapstructure:"iso_volume_name" required:"false" cty:"iso_volume_name" hcl:"iso_volume_name"`
+	IsoURL                  *string           `mapstructure:"iso_url" required:"false" cty:"iso_url" hcl:"iso_url"`
+	IsoStagingName          *string           `mapstructure:"iso_staging_name" required:"false" cty:"iso_staging_name" hcl:"iso_staging_name"`
+	IsoStorageSize          *string           `mapstructure:"iso_storage_size" required:"false" cty:"iso_storage_size" hcl:"iso_storage_size"`
+	IsoStorageClass         *string           `mapstructure:"iso_storage_class" required:"false" cty:"iso_storage_class" hcl:"iso_storage_class"`
+	IsoChecksum             *string           `mapstructure:"iso_checksum" required:"false" cty:"iso_checksum" hcl:"iso_checksum"`
+	IsoRetain               *bool             `mapstructure:"iso_retain" required:"false" cty:"iso_retain" hcl:"iso_retain"`
+	IsoHTTPSecretRef        *string           `mapstructure:"iso_http_secret_ref" required:"false" cty:"iso_http_secret_ref" hcl:"iso_http_secret_ref"`
+	IsoHTTPCertConfigMap    *string           `mapstructure:"iso_http_cert_config_map" required:"false" cty:"iso_http_cert_config_map" hcl:"iso_http_cert_config_map"`
+	IsoStagingTimeout       *string           `mapstructure:"iso_staging_timeout" required:"false" cty:"iso_staging_timeout" hcl:"iso_staging_timeout"`
 	DiskSize                *string           `mapstructure:"disk_size" required:"true" cty:"disk_size" hcl:"disk_size"`
 	InstanceType            *string           `mapstructure:"instance_type" required:"false" cty:"instance_type" hcl:"instance_type"`
 	InstanceTypeKind        *string           `mapstructure:"instance_type_kind" required:"false" cty:"instance_type_kind" hcl:"instance_type_kind"`
@@ -80,6 +89,15 @@ func (*FlatConfig) HCL2Spec() map[string]hcldec.Spec {
 		"name":                       &hcldec.AttrSpec{Name: "name", Type: cty.String, Required: false},
 		"namespace":                  &hcldec.AttrSpec{Name: "namespace", Type: cty.String, Required: false},
 		"iso_volume_name":            &hcldec.AttrSpec{Name: "iso_volume_name", Type: cty.String, Required: false},
+		"iso_url":                    &hcldec.AttrSpec{Name: "iso_url", Type: cty.String, Required: false},
+		"iso_staging_name":           &hcldec.AttrSpec{Name: "iso_staging_name", Type: cty.String, Required: false},
+		"iso_storage_size":           &hcldec.AttrSpec{Name: "iso_storage_size", Type: cty.String, Required: false},
+		"iso_storage_class":          &hcldec.AttrSpec{Name: "iso_storage_class", Type: cty.String, Required: false},
+		"iso_checksum":               &hcldec.AttrSpec{Name: "iso_checksum", Type: cty.String, Required: false},
+		"iso_retain":                 &hcldec.AttrSpec{Name: "iso_retain", Type: cty.Bool, Required: false},
+		"iso_http_secret_ref":        &hcldec.AttrSpec{Name: "iso_http_secret_ref", Type: cty.String, Required: false},
+		"iso_http_cert_config_map":   &hcldec.AttrSpec{Name: "iso_http_cert_config_map", Type: cty.String, Required: false},
+		"iso_staging_timeout":        &hcldec.AttrSpec{Name: "iso_staging_timeout", Type: cty.String, Required: false},
 		"disk_size":                  &hcldec.AttrSpec{Name: "disk_size", Type: cty.String, Required: false},
 		"instance_type":              &hcldec.AttrSpec{Name: "instance_type", Type: cty.String, Required: false},
 		"instance_type_kind":         &hcldec.AttrSpec{Name: "instance_type_kind", Type: cty.String, Required: false},

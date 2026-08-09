@@ -17,11 +17,13 @@ variable "kube_config" {
 
 source "kubevirt-iso" "windows" {
   # Kubernetes configuration
-  kube_config   = var.kube_config
-  name          = "windows-11-rand-575"
-  namespace     = "images"
+  kube_config = var.kube_config
+  name        = "windows-11-rand-575"
+  namespace   = "images"
 
-  # ISO configuration
+  # Windows install media generally isn't available at a public URL, so stage it
+  # into the cluster first (e.g. `virtctl image-upload`) and reference the
+  # resulting DataVolume by name.
   iso_volume_name = "windows-11-x86-64-iso"
 
   # VM sizing and guest profile.
@@ -60,10 +62,10 @@ source "kubevirt-iso" "windows" {
   # Boot process configuration
   # A set of commands to send over VNC connection
   boot_command = [
-    "<spacebar><wait>",                # Bypass press any key press challenge
+    "<spacebar><wait>", # Bypass press any key press challenge
   ]
-  boot_wait                 = "5s"     # Time to wait after boot starts
-  installation_wait_timeout = "20m"    # Timeout for installation to complete
+  boot_wait                 = "5s"  # Time to wait after boot starts
+  installation_wait_timeout = "20m" # Timeout for installation to complete
 
   # WinRM configuration
   communicator       = "winrm"

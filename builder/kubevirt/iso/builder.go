@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/hashicorp/packer-plugin-kubevirt/builder/kubevirt/iso/staging"
 	ssh "golang.org/x/crypto/ssh"
 
 	"github.com/hashicorp/hcl/v2/hcldec"
@@ -73,13 +74,13 @@ func (b *Builder) Run(ctx context.Context, ui packer.Ui, hook packer.Hook) (pack
 
 	steps := []multistep.Step{}
 	steps = append(steps,
-		&StepValidateIsoDataVolume{
-			Config: b.config,
-			Client: b.client,
-		},
 		&StepValidateBootableVolume{
 			Config: b.config,
 			Client: b.client,
+		},
+		&StepStageISO{
+			Config:  b.config,
+			Manager: &staging.Manager{CDI: b.client.CdiClient()},
 		},
 		&StepCopyMediaFiles{
 			Config: b.config,

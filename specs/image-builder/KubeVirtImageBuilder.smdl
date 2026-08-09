@@ -1,0 +1,324 @@
+Seedscript module description language 2.3
+
+Module("KubeVirtImageBuilder") {
+  description: "Specifies a second builder, kubevirt-image, that builds a golden image FROM an existing base image instead of installing from an ISO — the KubeVirt/CDI analogue of QEMU's disk_image=true. It resolves exactly one base source (a prior build's CDI DataSource, an existing PVC or VolumeSnapshot, or an external disk-image URL/registry) into the temporary VM's working root disk, boots that disk directly (no ISO, no CD-ROM, no boot_command, no kickstart), seeds first-boot credentials via cloud-init or sysprep so Packer can connect, provisions over SSH/WinRM, and captures the working disk as a new CDI DataSource. Layering stays entirely within CDI: build A emits a DataSource, build B clones it. Producing a Harvester VirtualMachineImage is an explicit non-goal handled downstream. The result is always a full, independent volume (CDI clone/import), never a qcow2 backing-file chain; use_backing_file has no CDI equivalent and is intentionally unsupported."
+  metaphor: "Sediment laid in strata: each build presses a new, complete layer onto the ones beneath it. There is no tracing-paper overlay that merely points back at the layer below (no backing file) — every stratum is a solid slab you can stand on by itself."
+  version: "0.1.0"
+  tags: ["packer", "kubevirt", "cdi", "image", "clone", "layering", "golden-image", "builder"]
+  theme: {
+    visual_style: "sedimentary-strata",
+    color_palette: ["#3B2C1A", "#7C5A33", "#C08457", "#E8C9A0"],
+    metaphorical_language: "base layer, stratum, full slab, no tracing-paper overlay, capture the layer"
+  }
+
+  components: {
+    Roots {
+      Directive("/build_from_base_image") {
+        description: "Entry point for the kubevirt-image builder: resolve one base source into the temporary VM's working root disk, boot it directly, provision, and capture the result as a golden CDI DataSource. Reuses the existing VM-create, stop, and bootable-volume finalize steps; differs from kubevirt-iso only in that the root disk is POPULATED from a base (not blank) and there is no ISO/CD-ROM/boot_command/kickstart/install-wait."
+        metaphor: "Choose the layer to build on, pour a full new slab over it, cure it, then lift it off as its own stone."
+        parameters: {
+          kube_config: { type: "string", description: "Path to the kubeconfig.", required: true },
+          name: { type: "string", description: "Output image (DataSource) name.", required: true },
+          namespace: { type: "string", description: "Namespace for the temporary VM and output.", required: true },
+          disk_size: { type: "quantity", description: "Working/output root disk capacity; must be >= the base image virtual size.", required: true },
+          base_datasource: { type: "string", description: "Name of a CDI DataSource to clone from (a prior build's output); the primary layering source.", required: false },
+          base_pvc: { type: "string", description: "namespace/name of an existing PVC to clone from.", required: false },
+          base_snapshot: { type: "string", description: "namespace/name of a VolumeSnapshot to clone from (CSI-dependent).", required: false },
+          base_image_url: { type: "string", description: "HTTP(S) URL of a disk image (qcow2/raw, optionally gz/xz) that CDI imports.", required: false },
+          base_registry: { type: "string", description: "Registry/containerdisk reference CDI imports.", required: false },
+          base_checksum: { type: "string", description: "Optional checksum for a URL base (CDI validates; requires CDI 1.65+).", required: false },
+          retain_base: { type: "bool", description: "Keep a plugin-staged external base as a reusable cache after a successful build.", required: false, default: false },
+          cloud_init_user_data: { type: "string", description: "cloud-init NoCloud user-data (Linux) that provisions the SSH user Packer connects as.", required: false },
+          sysprep: { type: "string", description: "Windows sysprep/first-boot config that provisions the WinRM/SSH user.", required: false },
+          instance_type: { type: "string", description: "Optional instancetype; mutually exclusive with explicit cpu/memory.", required: false },
+          cpu_sockets: { type: "int", description: "Explicit CPU sockets when instance_type is unset.", required: false },
+          memory: { type: "quantity", description: "Explicit guest memory when instance_type is unset.", required: false },
+          preference: { type: "string", description: "Optional preference (firmware/bus defaults) recorded on the output DataSource.", required: false },
+          networks: { type: "array", description: "Pod and/or Multus networks for the temporary VM.", required: false },
+          communicator: { type: "enum", options: ["ssh", "winrm"], description: "Provisioning communicator.", required: false },
+          keep_vm: { type: "bool", description: "Retain the temporary VM (and the media it references) for debugging.", required: false, default: false },
+          skip_create_image: { type: "bool", description: "Skip the final capture and HCP registration.", required: false, default: false },
+          staging_timeout: { type: "duration", description: "Max time for CDI to import/clone the base and to capture the output.", required: false }
+        }
+        actions: {
+          validate: "Reject zero or multiple base sources, source-incompatible options, and a disk_size smaller than a known base virtual size.",
+          resolve: "Reference an in-cluster base directly, or stage an external URL/registry base via the shared staging layer.",
+          build: "Create the temporary VM with the populated root disk and a credential disk, boot directly, and provision.",
+          capture: "Clone the working root disk into the golden DataVolume + DataSource using the shared finalize step.",
+          hand_off: "Publish the output DataSource name into build state for the artifact."
+        }
+        kernel: "ImageBuildKernel"
+        tags: ["entry", "exclusive-base", "boot-from-disk"]
+      }
+
+      Directive("/release_build_resources") {
+        description: "Reverse-order cleanup after the build: stop and delete the temporary VM, then release any plugin-staged external base per ownership and failure-retention policy. Never deletes an in-cluster base the user owns, and never deletes the captured output."
+        metaphor: "Strike the scaffolding and the mold, but never the customer's foundation stone or the slab you just cured."
+        parameters: {
+          namespace: { type: "string", description: "Build namespace.", required: true },
+          keep_vm: { type: "bool", description: "Whether to retain the temporary VM.", required: true }
+        }
+        actions: {
+          clean: "Delete plugin-owned temporary and staged-base resources; preserve user bases, retained caches, and the output."
+        }
+        kernel: "ImageBuildKernel"
+        tags: ["cleanup", "ownership-boundary", "reverse-order"]
+      }
+    }
+
+    Bloom {
+      Function("validate_base_source") {
+        description: "Validate that exactly one base source is set, that URL/registry references are well-formed, that disk_size is a positive quantity not smaller than a known base virtual size, and that credential config matches os_type (cloud-init for Linux, sysprep for Windows)."
+        metaphor: "Confirm there is one and only one foundation, and that the new slab's forms are big enough for it."
+        input_parameters: {
+          base_selectors: { type: "object", description: "The set of base_* fields; exactly one must be non-empty.", required: true },
+          disk_size: { type: "quantity", description: "Requested working/output capacity.", required: true },
+          os_type: { type: "string", description: "linux or windows.", required: true }
+        }
+        output_format: {
+          base_kind: "One of datasource, pvc, snapshot, url, or registry.",
+          normalized_options: "Validated, defaulted base and credential options."
+        }
+        tags: ["pure", "validation", "fail-fast"]
+      }
+
+      Function("resolve_incluster_base") {
+        description: "For a DataSource, PVC, or VolumeSnapshot base, produce a DataVolume populate-source reference (sourceRef DataSource, source.pvc, or source.snapshot) WITHOUT copying it first and WITHOUT adopting ownership. CDI performs a full, independent clone into the working root disk when the VM is created."
+        metaphor: "Point at the existing stratum; the press will lift a full impression of it, leaving the original untouched."
+        input_parameters: {
+          base_kind: { type: "string", description: "datasource | pvc | snapshot.", required: true },
+          reference: { type: "string", description: "Name or namespace/name of the in-cluster base.", required: true }
+        }
+        output_format: {
+          populate_source: "A CDI DataVolume source/sourceRef the working root disk template will use.",
+          owned: "Always false; in-cluster bases are never owned by the build."
+        }
+        tags: ["cdi", "clone", "external-ownership", "read-only"]
+      }
+
+      Function("stage_url_base") {
+        description: "For an external disk-image URL or registry reference, import it into a managed CDI DataVolume via the shared staging layer, then expose it as a DataSource the working root disk clones from. Honors the same ownership, retain, retain-on-failure, and identity-guard rules as ISO staging, so a failed build reuses the (often large) base import instead of re-downloading it."
+        metaphor: "Quarry an outside stone once, keep it in the yard, and press copies from it on each build."
+        input_parameters: {
+          namespace: { type: "string", description: "Target namespace.", required: true },
+          url_or_registry: { type: "string", description: "HTTP(S) disk-image URL or registry reference.", required: true },
+          storage_size: { type: "quantity", description: "Managed base DataVolume capacity (required for URL imports).", required: true },
+          checksum: { type: "string", description: "Optional CDI checksum (requires CDI 1.65+).", required: false },
+          retain: { type: "bool", description: "Keep the staged base after a successful build.", required: false }
+        }
+        output_format: {
+          populate_source: "A DataSource/DataVolume reference the working root disk clones from.",
+          owned: "True when created by this build.",
+          volume_uid: "UID recorded for identity-safe cleanup."
+        }
+        tags: ["cdi", "import", "reuses-staging", "cache", "idempotent"]
+      }
+
+      Function("build_working_root_disk") {
+        description: "Construct the temporary VM's root-disk DataVolumeTemplate populated from the resolved base (sourceRef DataSource, source.pvc, source.snapshot, or an imported base's DataSource), Block volume mode, sized to disk_size. Unlike kubevirt-iso there is no blank source, no CD-ROM, and no OEMDRV/kickstart disk."
+        metaphor: "Set the mold to full depth over the chosen layer; no hollow cavity, no stencil."
+        input_parameters: {
+          name: { type: "string", description: "VM/output base name.", required: true },
+          populate_source: { type: "object", description: "Resolved CDI source/sourceRef for the root disk.", required: true },
+          disk_size: { type: "quantity", description: "Root disk capacity.", required: true }
+        }
+        output_format: {
+          datavolume_template: "A DataVolumeTemplateSpec for the temporary VM's root disk."
+        }
+        tags: ["cdi", "block", "populated-root", "reuses-resources"]
+      }
+
+      Function("render_first_boot_credentials") {
+        description: "Produce the credential disk that lets Packer connect: a cloud-init NoCloud user-data disk for Linux, or a sysprep/first-boot config for Windows. Replaces kickstart/autounattend media of the ISO builder. If the base image already has known credentials, this may be a no-op."
+        metaphor: "Etch the door key into the fresh slab so the inspector can walk in."
+        input_parameters: {
+          os_type: { type: "string", description: "linux | windows.", required: true },
+          cloud_init_user_data: { type: "string", description: "Linux cloud-init user-data.", required: false },
+          sysprep: { type: "string", description: "Windows sysprep config.", required: false },
+          communicator: { type: "string", description: "ssh | winrm.", required: true }
+        }
+        output_format: {
+          credential_volume: "A cloud-init or sysprep volume/disk added to the temporary VM."
+        }
+        tags: ["cloud-init", "sysprep", "provisioning-access"]
+      }
+
+      Function("create_and_boot_vm") {
+        description: "Create the temporary VM with the populated root disk and credential disk and wait until Ready, reusing the existing VM-create machinery minus the ISO/CD-ROM/boot_command path. CDI clones/imports the base into the root disk as part of binding."
+        metaphor: "Clamp the mold, let the slab set, and wait until it can bear weight."
+        input_parameters: {
+          namespace: { type: "string", description: "Namespace.", required: true },
+          datavolume_template: { type: "object", description: "Populated root-disk template.", required: true },
+          credential_volume: { type: "object", description: "cloud-init/sysprep disk.", required: false },
+          sizing: { type: "object", description: "instancetype OR explicit cpu/memory; never both.", required: true },
+          networks: { type: "array", description: "Pod/Multus networks with communicator ports forwarded on masquerade.", required: false }
+        }
+        output_format: {
+          vm_ready: "True when the VM reports Ready."
+        }
+        tags: ["kubevirt", "boot-from-disk", "reuses-vm-create"]
+      }
+
+      Function("wait_for_communicator") {
+        description: "Establish SSH or WinRM to the booted VM (reusing the existing port-forward + communicator connect steps) and run provisioners."
+        metaphor: "Open the door and let the inspector do their work."
+        input_parameters: {
+          communicator: { type: "string", description: "ssh | winrm.", required: true },
+          timeout: { type: "duration", description: "Connection wait timeout.", required: true }
+        }
+        output_format: {
+          connected: "True when the communicator is reachable."
+        }
+        tags: ["ssh", "winrm", "reuses-communicator"]
+      }
+
+      Function("capture_bootable_volume") {
+        description: "After provisioning and a full VM stop, clone the working root disk into the golden DataVolume and create the output DataSource, labeled with default instancetype/preference. Identical to the kubevirt-iso finalize path and subject to the same output-name collision and -force rules."
+        metaphor: "Lift the cured slab out of the mold and stamp it as a finished stone."
+        input_parameters: {
+          name: { type: "string", description: "Output DataSource name.", required: true },
+          namespace: { type: "string", description: "Namespace.", required: true },
+          disk_size: { type: "quantity", description: "Output capacity.", required: true }
+        }
+        output_format: {
+          data_source: "The golden DataSource other builds can layer on via sourceRef."
+        }
+        tags: ["cdi", "finalize", "reuses-bootable-volume", "layerable-output"]
+      }
+
+      Function("cleanup_working_vm") {
+        description: "Stop and delete the temporary VM and wait for the VMI to disappear before any staged base is released, so a lingering VMI never holds a volume during cleanup. Reuses the existing stop/create cleanup logic and honors keep_vm."
+        metaphor: "Remove the clamps and mold only once the slab is free of them."
+        input_parameters: {
+          namespace: { type: "string", description: "Namespace.", required: true },
+          name: { type: "string", description: "VM name.", required: true },
+          keep_vm: { type: "bool", description: "Retain the VM and its referenced media.", required: true }
+        }
+        output_format: {
+          detached: "True when the VM and VMI are gone."
+        }
+        tags: ["cleanup", "vm", "detach-wait", "reuses-vm-steps"]
+      }
+
+      Function("cleanup_staged_base") {
+        description: "Delete a plugin-staged external base DataVolume only when the build succeeded, the base is not retained, its UID/identity still match, and the VM has detached. In-cluster user bases are never deleted. Mirrors ISO staging: a failed or cancelled build retains the staged base for reuse."
+        metaphor: "Return the quarried stone to the yard on success; keep it there untouched if the build fell through."
+        input_parameters: {
+          namespace: { type: "string", description: "Namespace.", required: true },
+          staged_base: { type: "object", description: "Ownership, retain, UID, and identity of the staged base.", required: true },
+          build_succeeded: { type: "bool", description: "Whether the build completed cleanly.", required: true }
+        }
+        output_format: {
+          deleted: "Whether a plugin-owned staged base was removed."
+        }
+        tags: ["cleanup", "reuses-staging", "retain-on-failure", "safe-delete"]
+      }
+    }
+
+    Sprout {
+      Chain("InClusterLayerFlow") {
+        description: "The layering path: clone a prior build's DataSource (or an existing PVC/snapshot) directly into the working root disk, boot, provision, and capture a new DataSource — all within CDI."
+        metaphor: "Press a full copy of the stratum below and cure a new one on top."
+        links: [
+          { source: "/build_from_base_image", target: "validate_base_source" },
+          { source: "validate_base_source", target: "resolve_incluster_base" },
+          { source: "resolve_incluster_base", target: "build_working_root_disk" },
+          { source: "build_working_root_disk", target: "render_first_boot_credentials" },
+          { source: "render_first_boot_credentials", target: "create_and_boot_vm" },
+          { source: "create_and_boot_vm", target: "wait_for_communicator" },
+          { source: "wait_for_communicator", target: "capture_bootable_volume" }
+        ]
+        tags: ["layering", "clone", "linear"]
+      }
+
+      Chain("ExternalImageFlow") {
+        description: "The external-base path: import a disk-image URL/registry into a managed (optionally retained) base via the staging layer, then clone it into the working root disk and proceed as in the layering flow."
+        metaphor: "Quarry an outside stone, keep it in the yard, then press copies from it."
+        links: [
+          { source: "/build_from_base_image", target: "validate_base_source" },
+          { source: "validate_base_source", target: "stage_url_base" },
+          { source: "stage_url_base", target: "build_working_root_disk" },
+          { source: "build_working_root_disk", target: "render_first_boot_credentials" },
+          { source: "render_first_boot_credentials", target: "create_and_boot_vm" },
+          { source: "create_and_boot_vm", target: "wait_for_communicator" },
+          { source: "wait_for_communicator", target: "capture_bootable_volume" }
+        ]
+        tags: ["external", "import", "reuses-staging", "linear"]
+      }
+
+      Chain("BuildCleanupFlow") {
+        description: "Reverse-order teardown: detach the temporary VM first, then release the staged base per retention policy; user bases and output are preserved."
+        metaphor: "Strike scaffolding before returning the borrowed stone; never touch the foundation or the finished slab."
+        links: [
+          { source: "/release_build_resources", target: "cleanup_working_vm" },
+          { source: "cleanup_working_vm", target: "cleanup_staged_base" }
+        ]
+        tags: ["cleanup", "reverse-order"]
+      }
+    }
+
+    Kernels {
+      Kernel("ImageBuildKernel") {
+        description: "Governs building a golden image from an existing base entirely within CDI: single base source, full independent clones, credential seeding without an installer, shared VM/finalize plumbing, and ownership-safe cleanup with retain-on-failure for staged bases."
+        metaphor: "The quarry master's rules: one foundation per slab, every slab a full stone, and never damage what you were only borrowing."
+        directive_chains: ["InClusterLayerFlow", "ExternalImageFlow", "BuildCleanupFlow"]
+        invariants: [
+          "Exactly one base source is configured: a DataSource, a PVC, a VolumeSnapshot, a disk-image URL, or a registry reference.",
+          "CDI performs all data movement; the plugin never streams image bytes itself.",
+          "Every result is a full, independent volume; there is no qcow2 backing-file chain and use_backing_file has no CDI equivalent, so it is unsupported.",
+          "An in-cluster base (DataSource/PVC/snapshot) is referenced and cloned, never owned, mutated, or deleted by the build.",
+          "An external URL/registry base is staged through the shared staging layer and follows the same ownership, identity-guard, retain, and retain-on-failure rules as ISO media.",
+          "There is no ISO, CD-ROM, boot_command, kickstart, or install-wait in this builder; first-boot access comes from cloud-init (Linux) or sysprep (Windows).",
+          "The working root disk is captured to the golden DataSource using the same finalize path, output-name collision guards, and -force semantics as the ISO builder.",
+          "Sizing is an instancetype OR explicit cpu/memory, never both; disk_size must be at least the base image virtual size.",
+          "The temporary VM and VMI are fully stopped and detached before capture and before any staged base is released.",
+          "Layering stays entirely in CDI (DataSource sourceRef); promoting the output to a Harvester VirtualMachineImage is an out-of-scope, optional downstream publish concern."
+        ]
+        tags: ["governor", "cdi-native", "layering", "ownership", "integrity"]
+      }
+    }
+  }
+
+  Semantics {
+    configuration_contract: |
+      New builder type: kubevirt-image. Exactly one base source:
+        base_datasource   — a prior build's output DataSource (primary layering path)
+        base_pvc          — namespace/name of an existing PVC
+        base_snapshot     — namespace/name of a VolumeSnapshot (CSI-dependent)
+        base_image_url    — HTTP(S) disk image (qcow2/raw, gz/xz) imported by CDI
+        base_registry     — registry/containerdisk reference imported by CDI
+      Shared with kubevirt-iso: kube_config, name, namespace, disk_size, sizing (instance_type OR
+      cpu/memory), preference, networks, communicator (+ ssh/winrm settings), keep_vm,
+      skip_create_image. New: cloud_init_user_data | sysprep for first-boot credentials, and
+      retain_base / base_checksum / staging_timeout for external bases.
+
+    reuse_map: |
+      Reuses today's plumbing almost wholesale:
+        - staging.Manager                -> stage_url_base (import + ownership + retain-on-failure + cleanup)
+        - resources.virtualMachine       -> build_working_root_disk (root DataVolumeTemplate), minus ISO/CD-ROM/OEMDRV
+        - StepCreateVirtualMachine       -> create_and_boot_vm (drop boot_command/install-wait)
+        - StepStartPortForward + comm    -> wait_for_communicator
+        - StepStopVirtualMachine         -> cleanup_working_vm (stop + VMI-gone wait)
+        - StepCreateBootableVolume       -> capture_bootable_volume (unchanged)
+      Net-new: base-source resolution (in-cluster ref vs URL/registry stage) and the cloud-init/sysprep
+      credential disk.
+
+    out_of_scope: |
+      - Local qcow2 files as a base (QEMU's local base_image_path). Upload into the cluster first
+        (external tool) and reference the resulting PVC/DataSource, mirroring the local-ISO decision.
+      - use_backing_file / sparse overlay chains. CDI clones are full and independent by design.
+      - Promoting the output to a Harvester VirtualMachineImage (Images-page publish); left to
+        harvester-image-tools, and avoided here because a VMImage-owned DV is goldenImage-guarded and
+        export-from-volume is the fragile path that tooling exists to work around.
+
+    open_questions: |
+      - cloud-init user-data delivery: inline string vs file vs ConfigMap, and whether to synthesize a
+        minimal user-data when the user only supplies ssh_username/password.
+      - For URL bases: always stage into a retained-capable managed DataVolume (reuse cache), or allow a
+        direct http-populated root disk when the user does not want a cache? Default: stage, to get
+        retain-on-failure and avoid re-downloading multi-GB base images.
+      - VolumeSnapshot base support likely gates on CSI snapshot capability; may ship after DataSource/PVC.
+      - Whether kubevirt-iso and kubevirt-image should share one builder with a disk_image-style toggle,
+        or remain two builders sharing internal packages. Leaning two builders, shared internals.
+  }
+}

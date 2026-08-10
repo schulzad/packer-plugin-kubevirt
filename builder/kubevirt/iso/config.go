@@ -7,11 +7,16 @@
 package iso
 
 import (
+	"encoding/hex"
 	"fmt"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/hashicorp/packer-plugin-sdk/common"
 	"github.com/hashicorp/packer-plugin-sdk/template/config"
+	"k8s.io/apimachinery/pkg/api/resource"
+	k8svalidation "k8s.io/apimachinery/pkg/util/validation"
 )
 
 // Network represents a network type and a resource that should be connected to the VM.
@@ -68,9 +73,35 @@ type Config struct {
 	Name string `mapstructure:"name" required:"true"`
 	// Namespace is the namespace in which to create the VM image.
 	Namespace string `mapstructure:"namespace" required:"true"`
-	// ISO Volume Name is the name of the DataVolume resource that contains the installation ISO.
-	// This DataVolume must already exist in the namespace.
-	IsoVolumeName string `mapstructure:"iso_volume_name" required:"true"`
+	// IsoVolumeName is the name of an existing, user-managed DataVolume that
+	// contains the installation ISO. Exactly one of iso_volume_name or iso_url
+	// must be set.
+	IsoVolumeName string `mapstructure:"iso_volume_name" required:"false"`
+	// IsoURL is an HTTP or HTTPS URL that CDI importer pods can reach. The
+	// builder creates a DataVolume that CDI imports inside the cluster and
+	// keeps it after the build so later runs reuse the (often multi-GB) import;
+	// force a fresh import with `packer build -force` or delete the DataVolume.
+	IsoURL string `mapstructure:"iso_url" required:"false"`
+	// IsoStagingName is the name used for the builder-managed ISO DataVolume
+	// created for iso_url. Defaults to "<name>-iso".
+	IsoStagingName string `mapstructure:"iso_staging_name" required:"false"`
+	// IsoStorageSize is the capacity of the builder-managed ISO DataVolume.
+	// It is required with iso_url.
+	IsoStorageSize string `mapstructure:"iso_storage_size" required:"false"`
+	// IsoStorageClass is the optional StorageClass for the managed ISO DataVolume.
+	IsoStorageClass string `mapstructure:"iso_storage_class" required:"false"`
+	// IsoChecksum verifies the imported media. Supported formats are md5:, sha1:,
+	// sha256:, and sha512: followed by a hex digest. HTTP checksum validation is
+	// performed by CDI and requires CDI 1.65 or newer.
+	IsoChecksum string `mapstructure:"iso_checksum" required:"false"`
+	// IsoHTTPSecretRef names a Secret containing credentials for an HTTP source.
+	IsoHTTPSecretRef string `mapstructure:"iso_http_secret_ref" required:"false"`
+	// IsoHTTPCertConfigMap names a ConfigMap containing additional CAs for an
+	// HTTPS source.
+	IsoHTTPCertConfigMap string `mapstructure:"iso_http_cert_config_map" required:"false"`
+	// IsoStagingTimeout is the maximum time allowed for CDI to import managed
+	// installation media. Defaults to one hour.
+	IsoStagingTimeout time.Duration `mapstructure:"iso_staging_timeout" required:"false"`
 	// DiskSize is the size of the root disk to of the temporary VM.
 	DiskSize string `mapstructure:"disk_size" required:"true"`
 	// InstanceType is the name of the InstanceType resource to use in the temporary VM.
@@ -157,7 +188,7 @@ type Config struct {
 
 	// KeepVM indicates whether to keep the temporary VM after the image has been created.
 	// If false, the VM and all its resources will be deleted after the image is created.
-	// If true, only the VM resource will be kept, all other resources will be deleted.
+	// If true, the VM and the managed storage resources it still references are retained.
 	// Default is false.
 	//
 	// This can be useful for debugging purposes, to inspect the VM and its disks.
@@ -180,9 +211,72 @@ func (c *Config) Prepare(raws ...interface{}) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	var warnings []string
 
 	if c.DiskBus == "" {
 		c.DiskBus = "scsi"
+	}
+
+	sourceCount := 0
+	for _, source := range []string{c.IsoVolumeName, c.IsoURL} {
+		if strings.TrimSpace(source) != "" {
+			sourceCount++
+		}
+	}
+	if sourceCount != 1 {
+		return nil, fmt.Errorf("exactly one of iso_volume_name or iso_url must be set")
+	}
+	if c.IsoVolumeName == c.Name || c.IsoVolumeName == c.Name+"-rootdisk" {
+		return nil, fmt.Errorf("iso_volume_name must not collide with the output or temporary root-disk name")
+	}
+
+	if c.IsoURL == "" {
+		if c.IsoStagingName != "" || c.IsoStorageSize != "" || c.IsoStorageClass != "" ||
+			c.IsoChecksum != "" || c.IsoHTTPSecretRef != "" ||
+			c.IsoHTTPCertConfigMap != "" || c.IsoStagingTimeout != 0 {
+			return nil, fmt.Errorf("managed ISO staging options cannot be combined with iso_volume_name")
+		}
+	} else {
+		if c.IsoStagingName == "" {
+			c.IsoStagingName = c.Name + "-iso"
+		}
+		if errs := k8svalidation.IsDNS1123Subdomain(c.IsoStagingName); len(errs) != 0 {
+			return nil, fmt.Errorf("iso_staging_name %q is invalid: %s", c.IsoStagingName, strings.Join(errs, ", "))
+		}
+		if c.IsoStagingName == c.Name || c.IsoStagingName == c.Name+"-rootdisk" {
+			return nil, fmt.Errorf("iso_staging_name must not collide with the output or temporary root-disk name")
+		}
+		if c.IsoStagingTimeout == 0 {
+			c.IsoStagingTimeout = time.Hour
+		}
+		if c.IsoStagingTimeout < 0 {
+			return nil, fmt.Errorf("iso_staging_timeout must be greater than zero")
+		}
+
+		parsedURL, parseErr := url.Parse(c.IsoURL)
+		if parseErr != nil || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") || parsedURL.Host == "" {
+			return nil, fmt.Errorf("iso_url must be a valid HTTP or HTTPS URL")
+		}
+		if c.IsoStorageSize == "" {
+			return nil, fmt.Errorf("iso_storage_size must be set with iso_url")
+		}
+		size, sizeErr := resource.ParseQuantity(c.IsoStorageSize)
+		if sizeErr != nil || size.Sign() <= 0 {
+			return nil, fmt.Errorf("iso_storage_size must be a positive Kubernetes quantity")
+		}
+		if c.IsoChecksum == "" {
+			warnings = append(warnings, "iso_url is configured without iso_checksum; remote media integrity will not be verified by CDI")
+		}
+	}
+	if c.IsoChecksum != "" {
+		algorithm, digest, found := strings.Cut(strings.ToLower(c.IsoChecksum), ":")
+		lengths := map[string]int{"md5": 16, "sha1": 20, "sha256": 32, "sha512": 64}
+		expectedLength, supported := lengths[algorithm]
+		decoded, decodeErr := hex.DecodeString(digest)
+		if !found || !supported || decodeErr != nil || len(decoded) != expectedLength {
+			return nil, fmt.Errorf("iso_checksum must be md5:, sha1:, sha256:, or sha512: followed by a valid hex digest")
+		}
+		c.IsoChecksum = algorithm + ":" + strings.ToLower(digest)
 	}
 
 	switch c.DiskInterface {
@@ -207,5 +301,5 @@ func (c *Config) Prepare(raws ...interface{}) ([]string, error) {
 			return nil, fmt.Errorf("network %q: only one of pod or multus can be defined", n.Name)
 		}
 	}
-	return nil, err
+	return warnings, nil
 }

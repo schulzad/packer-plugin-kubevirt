@@ -13,9 +13,11 @@ nav_title: ISO
 Type: `kubevirt-iso`
 Artifact BuilderId: `kubevirt.iso`
 
-The KubeVirt ISO builder creates VM image inside a Kubernetes cluster from
-ISO file. The builder supports Linux and Windows operating systems. Provisioning is done
-through SSH or WinRM once the guest is installed.
+The KubeVirt ISO builder creates a VM image inside a Kubernetes cluster from
+installation media. The builder can use an existing CDI DataVolume, import an
+HTTP URL through CDI, or upload a local ISO through the Kubernetes API. It
+supports Linux and Windows guests. Provisioning is done through SSH or WinRM
+once the guest is installed.
 
 ---
 
@@ -29,7 +31,8 @@ source "kubevirt-iso" "fedora" {
   kube_config     = "~/.kube/config"
   name            = "fedora-42-rand-85"
   namespace       = "vm-images"
-  iso_volume_name = "fedora-42-x86-64-iso"
+  iso_url          = "https://download.fedoraproject.org/pub/fedora/linux/releases/42/Server/x86_64/iso/Fedora-Server-dvd-x86_64-42-1.1.iso"
+  iso_storage_size = "3Gi"
 
   # Temporary VM type and preferences
   disk_size     = "10Gi"
@@ -44,6 +47,53 @@ build {
   sources = ["source.kubevirt-iso.fedora"]
 }
 ```
+
+## Installation Media Sources
+
+Exactly one installation-media source must be configured. Both sources resolve to
+a single CDI DataVolume that the temporary VM attaches as its CD-ROM; CDI does
+all data movement.
+
+### HTTP or HTTPS URL
+
+Use `iso_url` for a URL reachable from inside the cluster. The builder creates a
+DataVolume with a CDI HTTP source and CDI imports it — the Packer host never
+downloads or re-uploads the ISO.
+
+```hcl
+iso_url          = "https://mirror.example.com/rocky.iso"
+iso_storage_size = "12Gi"
+# iso_checksum   = "sha256:<64-character digest>"
+```
+
+The builder keeps this managed DataVolume after the build — on success as well as
+on a failed or cancelled run — so a later build reuses the (often multi-GB)
+import instead of downloading it again. A retained volume is reused only when its
+source URL, checksum, size, and storage class still match; force a fresh import
+with `packer build -force`, or remove it with `kubectl -n <ns> delete dv
+<name>-iso`. `iso_http_secret_ref` and `iso_http_cert_config_map` can reference
+credentials and additional certificate authorities in the build namespace. HTTP
+checksum validation is performed by CDI and requires CDI 1.65 or newer; if the
+API server prunes the `checksum` field, the builder fails before accepting the
+imported media.
+
+### Existing DataVolume
+
+Reference a DataVolume you (or another tool) manage. This is the right choice for
+media that already lives in the cluster — for example a local ISO staged in
+advance by an external tool.
+
+```hcl
+iso_volume_name = "rocky-9-7-install-iso"
+```
+
+The builder validates the DataVolume, waits for it to be ready, and **never
+deletes** a DataVolume supplied through `iso_volume_name`.
+
+> **Note:** Staging a *local* ISO into the cluster is intentionally out of scope
+> for this builder — that is a separate concern best handled before the build
+> (e.g. `virtctl image-upload` or a dedicated staging tool). Point
+> `iso_volume_name` at the resulting DataVolume.
 
 ## KubeVirt-ISO Builder Configuration Reference
 

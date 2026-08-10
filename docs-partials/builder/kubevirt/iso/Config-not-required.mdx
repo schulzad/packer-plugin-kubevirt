@@ -1,5 +1,34 @@
 <!-- Code generated from the comments of the Config struct in builder/kubevirt/iso/config.go; DO NOT EDIT MANUALLY -->
 
+- `iso_volume_name` (string) - IsoVolumeName is the name of an existing, user-managed DataVolume that
+  contains the installation ISO. Exactly one of iso_volume_name or iso_url
+  must be set.
+
+- `iso_url` (string) - IsoURL is an HTTP or HTTPS URL that CDI importer pods can reach. The
+  builder creates a DataVolume that CDI imports inside the cluster and
+  keeps it after the build so later runs reuse the (often multi-GB) import;
+  force a fresh import with `packer build -force` or delete the DataVolume.
+
+- `iso_staging_name` (string) - IsoStagingName is the name used for the builder-managed ISO DataVolume
+  created for iso_url. Defaults to "<name>-iso".
+
+- `iso_storage_size` (string) - IsoStorageSize is the capacity of the builder-managed ISO DataVolume.
+  It is required with iso_url.
+
+- `iso_storage_class` (string) - IsoStorageClass is the optional StorageClass for the managed ISO DataVolume.
+
+- `iso_checksum` (string) - IsoChecksum verifies the imported media. Supported formats are md5:, sha1:,
+  sha256:, and sha512: followed by a hex digest. HTTP checksum validation is
+  performed by CDI and requires CDI 1.65 or newer.
+
+- `iso_http_secret_ref` (string) - IsoHTTPSecretRef names a Secret containing credentials for an HTTP source.
+
+- `iso_http_cert_config_map` (string) - IsoHTTPCertConfigMap names a ConfigMap containing additional CAs for an
+  HTTPS source.
+
+- `iso_staging_timeout` (duration string | ex: "1h5m2s") - IsoStagingTimeout is the maximum time allowed for CDI to import managed
+  installation media. Defaults to one hour.
+
 - `instance_type` (string) - InstanceType is the name of the InstanceType resource to use in the temporary VM.
   Mutually exclusive with cpu/memory: set either an instance_type or explicit
   cpu/memory, but not both. KubeVirt forbids combining an instancetype matcher
@@ -79,7 +108,7 @@
 
 - `keep_vm` (bool) - KeepVM indicates whether to keep the temporary VM after the image has been created.
   If false, the VM and all its resources will be deleted after the image is created.
-  If true, only the VM resource will be kept, all other resources will be deleted.
+  If true, the VM and the managed storage resources it still references are retained.
   Default is false.
   
   This can be useful for debugging purposes, to inspect the VM and its disks.

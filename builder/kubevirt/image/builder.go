@@ -1,13 +1,12 @@
 // Copyright (c) Red Hat, Inc.
 // SPDX-License-Identifier: MPL-2.0
 
-package iso
+package image
 
 import (
 	"context"
 	"fmt"
 
-	"github.com/hashicorp/packer-plugin-kubevirt/builder/kubevirt/iso/staging"
 	ssh "golang.org/x/crypto/ssh"
 
 	"github.com/hashicorp/hcl/v2/hcldec"
@@ -22,6 +21,8 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 
 	"kubevirt.io/client-go/kubecli"
+
+	"github.com/hashicorp/packer-plugin-kubevirt/builder/kubevirt/iso"
 )
 
 type Builder struct {
@@ -72,61 +73,37 @@ func (b *Builder) Run(ctx context.Context, ui packer.Ui, hook packer.Hook) (pack
 
 	generatedData := &packerbuilderdata.GeneratedData{State: state}
 
-	steps := []multistep.Step{}
-	steps = append(steps,
-		&StepValidateBootableVolume{
+	// The validate/port-forward/stop/finalize steps are shared with the
+	// kubevirt-iso builder and are typed to iso.Config, so adapt this builder's
+	// config to the shared fields they read.
+	shared := b.sharedISOConfig()
+
+	steps := []multistep.Step{
+		&iso.StepValidateBootableVolume{
+			Config: shared,
+			Client: b.client,
+		},
+		&StepCreateVM{
 			Config: b.config,
 			Client: b.client,
 		},
-		&StepStageISO{
-			Config:  b.config,
-			Manager: &staging.Manager{CDI: b.client.CdiClient()},
-		},
-		&StepCopyMediaFiles{
-			Config: b.config,
-			Client: b.clientset,
-		},
-		&StepCreateVirtualMachine{
-			Config: b.config,
-			Client: b.client,
-		},
-		&StepBootCommand{
-			config: b.config,
-			client: b.client,
-		},
-		&StepWaitForInstallation{
-			Config: b.config,
-		},
-	)
+	}
 
 	if b.config.Communicator == "ssh" {
-		sshSteps, err := b.buildSSHSteps()
-		if err != nil {
-			ui.Errorf("SSH communicator config error: %v", err)
-			return nil, nil
-		}
-		steps = append(steps, sshSteps...)
+		steps = append(steps, b.buildSSHSteps(shared)...)
 	}
-
 	if b.config.Communicator == "winrm" {
-		winRMSteps, err := b.buildWinRMSteps()
-		if err != nil {
-			ui.Errorf("WinRM communicator config error: %v", err)
-			return nil, nil
-		}
-		steps = append(steps, winRMSteps...)
+		steps = append(steps, b.buildWinRMSteps(shared)...)
 	}
 
-	steps = append(steps,
-		&StepStopVirtualMachine{
-			Config: b.config,
-			Client: b.client,
-		},
-	)
+	steps = append(steps, &iso.StepStopVirtualMachine{
+		Config: shared,
+		Client: b.client,
+	})
 
 	if !b.config.SkipCreateImage {
-		steps = append(steps, &StepCreateBootableVolume{
-			Config:        b.config,
+		steps = append(steps, &iso.StepCreateBootableVolume{
+			Config:        shared,
 			Client:        b.client,
 			GeneratedData: generatedData,
 		})
@@ -152,16 +129,51 @@ func (b *Builder) Run(ctx context.Context, ui packer.Ui, hook packer.Hook) (pack
 	}
 	namespace, _ := state.Get("bootable_volume_namespace").(string)
 
-	return &Artifact{
+	return &iso.Artifact{
 		Name:      bootableVolumeName,
 		Namespace: namespace,
+		BuilderID: "packer.kubevirt.image",
 		StateData: map[string]any{
 			"generated_data": state.Get("generated_data"),
 		},
 	}, nil
 }
 
-func (b *Builder) buildSSHSteps() ([]multistep.Step, []error) {
+// sharedISOConfig projects this builder's config onto the fields the reused
+// kubevirt-iso steps read (validation, port-forward, stop, finalize).
+func (b *Builder) sharedISOConfig() iso.Config {
+	c := b.config
+	return iso.Config{
+		PackerConfig:        c.PackerConfig,
+		KubeConfig:          c.KubeConfig,
+		Name:                c.Name,
+		Namespace:           c.Namespace,
+		DiskSize:            c.DiskSize,
+		InstanceType:        c.InstanceType,
+		InstanceTypeKind:    c.InstanceTypeKind,
+		Preference:          c.Preference,
+		PreferenceKind:      c.PreferenceKind,
+		OperatingSystemType: c.OperatingSystemType,
+		DiskInterface:       c.DiskInterface,
+		Communicator:        c.Communicator,
+		SSHHost:             c.SSHHost,
+		SSHLocalPort:        c.SSHLocalPort,
+		SSHRemotePort:       c.SSHRemotePort,
+		SSHUsername:         c.SSHUsername,
+		SSHPassword:         c.SSHPassword,
+		SSHWaitTimeout:      c.SSHWaitTimeout,
+		WinRMHost:           c.WinRMHost,
+		WinRMLocalPort:      c.WinRMLocalPort,
+		WinRMRemotePort:     c.WinRMRemotePort,
+		WinRMUsername:       c.WinRMUsername,
+		WinRMPassword:       c.WinRMPassword,
+		WinRMWaitTimeout:    c.WinRMWaitTimeout,
+		KeepVM:              c.KeepVM,
+		SkipCreateImage:     c.SkipCreateImage,
+	}
+}
+
+func (b *Builder) buildSSHSteps(shared iso.Config) []multistep.Step {
 	commConfig := &communicator.Config{
 		Type: b.config.Communicator,
 		SSH: communicator.SSH{
@@ -172,41 +184,35 @@ func (b *Builder) buildSSHSteps() ([]multistep.Step, []error) {
 			SSHTimeout:  b.config.SSHWaitTimeout,
 		},
 	}
+	_ = commConfig.Prepare(&interpolate.Context{})
 
-	if err := commConfig.Prepare(&interpolate.Context{}); err != nil {
-		return nil, err
-	}
-
-	steps := []multistep.Step{
-		&StepStartPortForward{
-			Config:        b.config,
+	return []multistep.Step{
+		&iso.StepStartPortForward{
+			Config:        shared,
 			Client:        b.client,
-			ForwarderFunc: DefaultPortForwarder,
+			ForwarderFunc: iso.DefaultPortForwarder,
 		},
 		&communicator.StepConnect{
 			Config: commConfig,
-			Host: func(state multistep.StateBag) (string, error) {
-				return commConfig.SSH.SSHHost, nil
+			Host: func(multistep.StateBag) (string, error) {
+				return b.config.SSHHost, nil
 			},
-			SSHConfig: func(state multistep.StateBag) (*ssh.ClientConfig, error) {
+			SSHConfig: func(multistep.StateBag) (*ssh.ClientConfig, error) {
 				return &ssh.ClientConfig{
-					User: b.config.SSHUsername,
-					Auth: []ssh.AuthMethod{
-						ssh.Password(b.config.SSHPassword),
-					},
+					User:            b.config.SSHUsername,
+					Auth:            []ssh.AuthMethod{ssh.Password(b.config.SSHPassword)},
 					HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 				}, nil
 			},
-			SSHPort: func(state multistep.StateBag) (int, error) {
+			SSHPort: func(multistep.StateBag) (int, error) {
 				return b.config.SSHLocalPort, nil
 			},
 		},
 		&commonsteps.StepProvision{},
 	}
-	return steps, nil
 }
 
-func (b *Builder) buildWinRMSteps() ([]multistep.Step, []error) {
+func (b *Builder) buildWinRMSteps(shared iso.Config) []multistep.Step {
 	commConfig := &communicator.Config{
 		Type: b.config.Communicator,
 		WinRM: communicator.WinRM{
@@ -217,33 +223,29 @@ func (b *Builder) buildWinRMSteps() ([]multistep.Step, []error) {
 			WinRMTimeout:  b.config.WinRMWaitTimeout,
 		},
 	}
+	_ = commConfig.Prepare(&interpolate.Context{})
 
-	if err := commConfig.Prepare(&interpolate.Context{}); err != nil {
-		return nil, err
-	}
-
-	steps := []multistep.Step{
-		&StepStartPortForward{
-			Config:        b.config,
+	return []multistep.Step{
+		&iso.StepStartPortForward{
+			Config:        shared,
 			Client:        b.client,
-			ForwarderFunc: DefaultPortForwarder,
+			ForwarderFunc: iso.DefaultPortForwarder,
 		},
 		&communicator.StepConnect{
 			Config: commConfig,
-			Host: func(state multistep.StateBag) (string, error) {
-				return commConfig.WinRMHost, nil
+			Host: func(multistep.StateBag) (string, error) {
+				return b.config.WinRMHost, nil
 			},
-			WinRMConfig: func(state multistep.StateBag) (*communicator.WinRMConfig, error) {
+			WinRMConfig: func(multistep.StateBag) (*communicator.WinRMConfig, error) {
 				return &communicator.WinRMConfig{
 					Username: b.config.WinRMUsername,
 					Password: b.config.WinRMPassword,
 				}, nil
 			},
-			WinRMPort: func(state multistep.StateBag) (int, error) {
+			WinRMPort: func(multistep.StateBag) (int, error) {
 				return b.config.WinRMLocalPort, nil
 			},
 		},
 		&commonsteps.StepProvision{},
 	}
-	return steps, nil
 }

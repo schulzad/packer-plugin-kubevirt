@@ -62,6 +62,10 @@ var _ = Describe("StepStopVirtualMachine", func() {
 			VirtualMachine(namespace).
 			Return(vmClient.KubevirtV1().VirtualMachines(namespace)).
 			AnyTimes()
+		mockVirt.EXPECT().
+			VirtualMachineInstance(namespace).
+			Return(vmClient.KubevirtV1().VirtualMachineInstances(namespace)).
+			AnyTimes()
 
 		virtClient, _ = kubecli.GetKubevirtClientFromClientConfig(nil)
 
@@ -92,6 +96,7 @@ var _ = Describe("StepStopVirtualMachine", func() {
 
 			action := step.Run(context.Background(), state)
 			Expect(action).To(Equal(multistep.ActionContinue))
+			Expect(state.Get("temporary_vm_detached")).To(BeTrue())
 		})
 
 		It("halts when VM cannot be retrieved", func() {

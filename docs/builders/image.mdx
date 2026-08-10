@@ -1,0 +1,123 @@
+---
+modeline: |
+  vim: set ft=pandoc:
+description: |
+  The KubeVirt Image builder builds a golden image from an existing base image
+  by cloning it into a temporary Virtual Machine (VM), provisioning it, and
+  capturing the result as a new image.
+page_title: KubeVirt Image - Builders
+nav_title: Image
+---
+
+# KubeVirt Builder (from an existing image)
+
+Type: `kubevirt-image`
+Artifact BuilderId: `packer.kubevirt.image`
+
+The KubeVirt Image builder creates a golden image inside a Kubernetes cluster
+**from an existing base image** instead of installing from an ISO — the
+KubeVirt/CDI analogue of the QEMU builder's `disk_image = true`. It clones a CDI
+`DataSource` (typically a prior build's output) into the temporary VM's root
+disk, boots that disk directly (no ISO, no CD-ROM, no boot command, no
+kickstart), provisions over SSH or WinRM, and captures the provisioned disk as a
+new `DataSource`. CDI performs all data movement, and every result is a full,
+independent volume — there is no qcow2 backing-file chain.
+
+Because layering stays entirely within CDI, build A emits a `DataSource` and
+build B clones it: the output of one image build is a valid `source_datasource`
+for the next.
+
+---
+
+## Basic Example
+
+This example builds `images/fedora-44-golden` from an existing
+`images/fedora-44` DataSource (for example, one produced by the
+[`kubevirt-iso`](/packer/integrations/hashicorp/kubevirt/latest/components/builder/iso)
+builder):
+
+```hcl
+source "kubevirt-image" "fedora" {
+  # Kubernetes configuration
+  kube_config = "~/.kube/config"
+  name        = "fedora-44-golden"
+  namespace   = "images"
+
+  # Base image to clone into the temporary VM's root disk.
+  source_datasource = "fedora-44"
+
+  # Temporary VM sizing. disk_size must be >= the base image's virtual size.
+  disk_size = "20Gi"
+  cpu_cores = 2
+  memory    = "4Gi"
+  preference = "fedora"
+
+  # The base image already carries these credentials.
+  communicator     = "ssh"
+  ssh_host         = "127.0.0.1"
+  ssh_local_port   = 2022
+  ssh_remote_port  = 22
+  ssh_username     = "user"
+  ssh_password     = "root"
+  ssh_wait_timeout = "10m"
+}
+
+build {
+  sources = ["source.kubevirt-image.fedora"]
+
+  provisioner "shell" {
+    inline = ["cat /etc/os-release"]
+  }
+}
+```
+
+## Base Image Source
+
+The builder clones an existing CDI `DataSource` into the temporary VM's root
+disk. Set `source_datasource` to the DataSource name, and optionally
+`source_namespace` if the base lives in a different namespace than the build
+(it defaults to `namespace`):
+
+```hcl
+source_datasource = "fedora-44"
+# source_namespace = "images"
+```
+
+The clone is a full, independent copy — the base DataSource is only read, never
+modified or deleted. The output `name` must not collide with the base or with
+the temporary root disk (`<name>-rootdisk`).
+
+Unlike the ISO builder, there is no installer, so the base image must already be
+bootable and reachable by the communicator. Use a base whose credentials you
+know (for example a previous `kubevirt-iso` build), or provision first-boot
+credentials before connecting.
+
+> **Note:** Today the builder clones an existing in-cluster `DataSource`.
+> Additional base sources — an existing PVC, a `VolumeSnapshot`, or a
+> CDI-imported disk-image URL — are planned. To build from media that is not yet
+> in the cluster, import it first (for example with the `kubevirt-iso` builder or
+> an external tool) and point `source_datasource` at the resulting DataSource.
+
+## KubeVirt-Image Builder Configuration Reference
+
+### Required Configuration
+
+@include 'builder/kubevirt/image/Config-required.mdx'
+
+### Not Required Configuration
+
+@include 'builder/kubevirt/image/Config-not-required.mdx'
+
+### Network Configuration
+
+@include 'builder/kubevirt/image/Network.mdx'
+@include 'builder/kubevirt/image/Network-not-required.mdx'
+
+@include 'builder/kubevirt/image/NetworkSource.mdx'
+@include 'builder/kubevirt/image/NetworkSource-not-required.mdx'
+
+@include 'builder/kubevirt/image/PodNetwork.mdx'
+@include 'builder/kubevirt/image/PodNetwork-not-required.mdx'
+
+@include 'builder/kubevirt/image/MultusNetwork.mdx'
+@include 'builder/kubevirt/image/MultusNetwork-not-required.mdx'

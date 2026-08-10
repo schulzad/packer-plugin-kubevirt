@@ -5,8 +5,9 @@
   must be set.
 
 - `iso_url` (string) - IsoURL is an HTTP or HTTPS URL that CDI importer pods can reach. The
-  builder creates a DataVolume that CDI imports inside the cluster, and
-  cleans it up after the build unless iso_retain is set.
+  builder creates a DataVolume that CDI imports inside the cluster and
+  keeps it after the build so later runs reuse the (often multi-GB) import;
+  force a fresh import with `packer build -force` or delete the DataVolume.
 
 - `iso_staging_name` (string) - IsoStagingName is the name used for the builder-managed ISO DataVolume
   created for iso_url. Defaults to "<name>-iso".
@@ -19,9 +20,6 @@
 - `iso_checksum` (string) - IsoChecksum verifies the imported media. Supported formats are md5:, sha1:,
   sha256:, and sha512: followed by a hex digest. HTTP checksum validation is
   performed by CDI and requires CDI 1.65 or newer.
-
-- `iso_retain` (bool) - IsoRetain preserves the builder-managed ISO DataVolume after the build so
-  later builds can reuse it when its source identity matches.
 
 - `iso_http_secret_ref` (string) - IsoHTTPSecretRef names a Secret containing credentials for an HTTP source.
 

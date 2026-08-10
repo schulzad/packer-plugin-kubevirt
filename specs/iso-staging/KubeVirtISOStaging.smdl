@@ -3,7 +3,7 @@ Seedscript module description language 2.3
 Module("KubeVirtISOStaging") {
   description: "Defines how the kubevirt-iso builder resolves installation media into one CDI DataVolume the temporary VM attaches as its CD-ROM. Two sources are supported: an existing user-managed DataVolume referenced by name, and an HTTP(S) URL that CDI imports inside the cluster. CDI performs all data movement; the plugin only creates, validates, waits on, and cleans up DataVolume objects. Staging a local file into the cluster is intentionally out of scope and left to an external tool that produces a DataVolume the builder then consumes by name."
   metaphor: "A guarded loading dock routes each shipment through the correct bay and releases only identified media to the builder, never touching cargo it did not bring in."
-  version: "0.2.0"
+  version: "0.3.0"
   tags: ["packer", "kubevirt", "cdi", "iso", "staging", "lifecycle"]
   theme: {
     visual_style: "guarded-loading-dock",
@@ -23,8 +23,7 @@ Module("KubeVirtISOStaging") {
           staging_name: { type: "string", description: "Name for the managed DataVolume created for http_url; defaults to <name>-iso.", required: false },
           storage_size: { type: "quantity", description: "Destination capacity; required for HTTP imports.", required: false },
           storage_class: { type: "string", description: "Optional destination StorageClass.", required: false },
-          checksum: { type: "string", description: "Optional expected source checksum, validated by CDI.", required: false },
-          retain: { type: "bool", description: "Whether a plugin-created DataVolume remains after the build.", required: false, default: false }
+          checksum: { type: "string", description: "Optional expected source checksum, validated by CDI.", required: false }
         }
         actions: {
           validate: "Reject zero or multiple source selectors and source-incompatible options.",
@@ -36,19 +35,18 @@ Module("KubeVirtISOStaging") {
       }
 
       Directive("/release_iso_source") {
-        description: "Delete plugin-owned, non-retained media after VM cleanup while preserving externally owned or explicitly retained DataVolumes."
-        metaphor: "The dockmaster clears rented bays but never removes customer-owned or bonded cargo."
+        description: "Preserve installation media after VM cleanup: plugin-owned imports are always kept for reuse, and externally owned DataVolumes are never touched."
+        metaphor: "The dockmaster leaves every bay sealed, keeping bonded imports on hand for the next shipment."
         parameters: {
           namespace: { type: "string", description: "Staging namespace.", required: true },
           volume_name: { type: "string", description: "Resolved ISO DataVolume name.", required: true },
-          owned: { type: "bool", description: "Whether the plugin created the DataVolume.", required: true },
-          retain: { type: "bool", description: "Whether the managed DataVolume is a retained cache entry.", required: true }
+          owned: { type: "bool", description: "Whether the plugin created the DataVolume.", required: true }
         }
         actions: {
-          clean: "Delete only plugin-owned, non-retained media once VM consumers are gone."
+          retain: "Keep plugin-owned imports for reuse and leave externally owned media untouched; a forced re-import replaces managed media on the next run."
         }
         kernel: "ISOStagingKernel"
-        tags: ["cleanup", "ownership-boundary"]
+        tags: ["cleanup", "ownership-boundary", "retain"]
       }
     }
 
@@ -132,35 +130,32 @@ Module("KubeVirtISOStaging") {
       }
 
       Function("publish_iso_volume") {
-        description: "Publish the resolved name, UID, ownership, retention, and source identity into multistep state for VM creation and reverse-order cleanup."
+        description: "Publish the resolved name, UID, ownership, and source identity into multistep state for VM creation and reverse-order cleanup."
         metaphor: "The dockmaster issues a custody receipt consumed by the VM assembly line."
         input_parameters: {
           volume_name: { type: "string", description: "Resolved DataVolume name.", required: true },
           volume_uid: { type: "string", description: "Resolved DataVolume UID (managed sources only).", required: false },
           owned: { type: "bool", description: "Plugin ownership marker.", required: true },
-          retain: { type: "bool", description: "Retention decision.", required: true },
           source_identity: { type: "SourceIdentity", description: "Resolved source identity.", required: true }
         }
         output_format: {
-          state: "Resolved volume name, UID, source identity, ownership, and retention keys."
+          state: "Resolved volume name, UID, source identity, and ownership keys."
         }
         tags: ["multistep", "handoff"]
       }
 
-      Function("cleanup_owned_source") {
-        description: "Delete a managed DataVolume only after verifying it is still the exact object this build created; preserve external and retained media on every path."
-        metaphor: "Only an empty rented bay with a matching seal is swept; customer and bonded bays remain sealed."
+      Function("retain_owned_source") {
+        description: "Preserve managed media on every cleanup path so a later build reuses it; an owned import is never deleted here. Stale managed media is replaced only by a forced re-import during staging, and externally owned media is always left untouched."
+        metaphor: "Every rented bay is left sealed for the next shipment; only a new booking clears it."
         input_parameters: {
           namespace: { type: "string", description: "DataVolume namespace.", required: true },
           volume_name: { type: "string", description: "Resolved DataVolume name.", required: true },
-          volume_uid: { type: "string", description: "Expected DataVolume UID.", required: false },
-          owned: { type: "bool", description: "Plugin ownership marker.", required: true },
-          retain: { type: "bool", description: "Retention decision.", required: true }
+          owned: { type: "bool", description: "Plugin ownership marker.", required: true }
         }
         output_format: {
-          deleted: "Whether a plugin-owned DataVolume was removed."
+          retained: "Always true for resolved media; deletion never happens on cleanup."
         }
-        tags: ["cleanup", "safe-delete", "idempotent"]
+        tags: ["cleanup", "retain", "idempotent"]
       }
     }
 
@@ -191,12 +186,12 @@ Module("KubeVirtISOStaging") {
       }
 
       Chain("SourceCleanupFlow") {
-        description: "Apply source ownership and retention policy after reverse-order VM cleanup."
-        metaphor: "The receipt controls which empty bay may be cleared."
+        description: "Retain managed media and preserve external media after reverse-order VM cleanup."
+        metaphor: "The receipt confirms every bay stays sealed for the next shipment."
         links: [
-          { source: "/release_iso_source", target: "cleanup_owned_source" }
+          { source: "/release_iso_source", target: "retain_owned_source" }
         ]
-        tags: ["cleanup", "reverse-order"]
+        tags: ["cleanup", "reverse-order", "retain"]
       }
     }
 
@@ -213,9 +208,9 @@ Module("KubeVirtISOStaging") {
           "An existing DataVolume is always externally owned and is never deleted by plugin cleanup.",
           "A managed DataVolume is reused only when its immutable source identity and storage shape match; a pruned or mismatched object fails closed and is never treated as a cache entry.",
           "VM creation reads the resolved DataVolume name from multistep state rather than assuming configuration contains a pre-existing name.",
-          "Plugin-owned non-retained media is deleted only after the temporary VM is confirmed detached, and only when the object's UID and identity still match this build.",
-          "A halted or cancelled build retains the managed import so a re-run reuses it; deletion happens only on a clean build (or when explicitly forced).",
-          "Retention and ownership are explicit state, not inferred from object existence during cleanup."
+          "Plugin-owned media is never deleted by cleanup; it is retained for reuse on every path (success, failure, or cancel).",
+          "Managed media is removed only by a forced re-import that replaces it (matched on UID and identity) or by a manual delete, never by ordinary cleanup.",
+          "Ownership is explicit state, not inferred from object existence during cleanup."
         ]
         tags: ["governor", "ownership", "integrity", "lifecycle"]
       }
@@ -226,7 +221,7 @@ Module("KubeVirtISOStaging") {
     configuration_contract: |
       iso_volume_name selects an existing, externally owned DataVolume (unchanged, backwards compatible).
       iso_url selects a managed CDI HTTP import. Managed-source options (iso_staging_name,
-      iso_storage_size, iso_storage_class, iso_checksum, iso_retain, iso_http_secret_ref,
+      iso_storage_size, iso_storage_class, iso_checksum, iso_http_secret_ref,
       iso_http_cert_config_map, iso_staging_timeout) apply only with iso_url.
 
     out_of_scope: |
@@ -237,8 +232,8 @@ Module("KubeVirtISOStaging") {
       revisit in-plugin local staging once the URL path has proven out.
 
     cache_policy: |
-      A managed DataVolume is deleted after the build unless iso_retain is true. A retained DataVolume
-      forms a namespace-scoped cache and must pass exact identity validation (source URL hash, checksum,
-      size, storage class) before reuse.
+      A managed DataVolume is always retained after the build, forming a namespace-scoped cache. It is
+      reused only after passing exact identity validation (source URL hash, checksum, size, storage
+      class); a forced re-import (packer build -force) replaces it, and a manual delete removes it.
   }
 }

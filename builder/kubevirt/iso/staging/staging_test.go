@@ -120,16 +120,12 @@ func TestStageHTTPRejectsPrunedChecksum(t *testing.T) {
 		StorageSize: "2Gi",
 		Checksum:    "sha256:" + strings.Repeat("a", 64),
 		Timeout:     time.Second,
-		Retain:      true,
 	})
 	if err == nil || !strings.Contains(err.Error(), "CDI 1.65+") {
 		t.Fatalf("expected unsupported checksum error, got %v", err)
 	}
 	if !result.Owned {
-		t.Fatal("created DataVolume must remain owned so cleanup can remove it")
-	}
-	if result.Retain {
-		t.Fatal("a pruned DataVolume must not be retained as a cache entry")
+		t.Fatal("created DataVolume must remain owned so a forced re-import can replace it")
 	}
 }
 
@@ -160,7 +156,6 @@ func TestStageHTTPReusesMatchingManagedVolume(t *testing.T) {
 		HTTPURL:     "https://mirror.example.test/rocky.iso",
 		VolumeName:  "rocky-iso",
 		StorageSize: "2Gi",
-		Retain:      true,
 		Timeout:     time.Second,
 	})
 	if err != nil {
@@ -171,7 +166,7 @@ func TestStageHTTPReusesMatchingManagedVolume(t *testing.T) {
 	}
 }
 
-func TestCleanupDeletesOnlyManagedDataVolume(t *testing.T) {
+func TestDeleteManagedDataVolumeRemovesManaged(t *testing.T) {
 	ctx := context.Background()
 	dv := &cdiv1.DataVolume{
 		ObjectMeta: metav1.ObjectMeta{
@@ -185,22 +180,15 @@ func TestCleanupDeletesOnlyManagedDataVolume(t *testing.T) {
 	cdiClient := fakecdiclient.NewSimpleClientset(dv)
 	manager := &Manager{CDI: cdiClient}
 
-	err := manager.Cleanup(ctx, "images", Result{
-		VolumeName: "managed-iso",
-		VolumeUID:  "managed-uid",
-		Owned:      true,
-		Kind:       SourceHTTP,
-		Identity:   Identity{Kind: SourceHTTP},
-	})
-	if err != nil {
-		t.Fatalf("cleanup managed DataVolume: %v", err)
+	if err := manager.deleteManagedDataVolume(ctx, "images", "managed-iso", "managed-uid"); err != nil {
+		t.Fatalf("delete managed DataVolume: %v", err)
 	}
 	if _, err := cdiClient.CdiV1beta1().DataVolumes("images").Get(ctx, "managed-iso", metav1.GetOptions{}); !apierrors.IsNotFound(err) {
 		t.Fatalf("managed DataVolume still exists: %v", err)
 	}
 }
 
-func TestCleanupRefusesReplacementDataVolumeUID(t *testing.T) {
+func TestDeleteManagedDataVolumeRefusesReplacementUID(t *testing.T) {
 	ctx := context.Background()
 	dv := &cdiv1.DataVolume{
 		ObjectMeta: metav1.ObjectMeta{
@@ -214,13 +202,7 @@ func TestCleanupRefusesReplacementDataVolumeUID(t *testing.T) {
 	cdiClient := fakecdiclient.NewSimpleClientset(dv)
 	manager := &Manager{CDI: cdiClient}
 
-	err := manager.Cleanup(ctx, "images", Result{
-		VolumeName: "managed-iso",
-		VolumeUID:  "original-uid",
-		Owned:      true,
-		Kind:       SourceHTTP,
-		Identity:   Identity{Kind: SourceHTTP},
-	})
+	err := manager.deleteManagedDataVolume(ctx, "images", "managed-iso", "original-uid")
 	if err == nil || !strings.Contains(err.Error(), "replacement") {
 		t.Fatalf("expected replacement UID refusal, got %v", err)
 	}
@@ -229,19 +211,22 @@ func TestCleanupRefusesReplacementDataVolumeUID(t *testing.T) {
 	}
 }
 
-func TestCleanupPreservesRetainedAndExternalVolumes(t *testing.T) {
+func TestDeleteManagedDataVolumeRefusesUnmanaged(t *testing.T) {
 	ctx := context.Background()
-	cdiClient := fakecdiclient.NewSimpleClientset()
+	// A DataVolume without the plugin's ownership markers must never be deleted,
+	// even by the forced-reimport path.
+	dv := &cdiv1.DataVolume{
+		ObjectMeta: metav1.ObjectMeta{Name: "user-iso", Namespace: "images"},
+	}
+	cdiClient := fakecdiclient.NewSimpleClientset(dv)
 	manager := &Manager{CDI: cdiClient}
 
-	// Neither an external nor a retained result should trigger any deletion.
-	for _, result := range []Result{
-		{VolumeName: "user-iso", Owned: false, Kind: SourceExisting},
-		{VolumeName: "cache-iso", Owned: true, Retain: true, Kind: SourceHTTP},
-	} {
-		if err := manager.Cleanup(ctx, "images", result); err != nil {
-			t.Fatalf("cleanup must be a no-op for %#v: %v", result, err)
-		}
+	err := manager.deleteManagedDataVolume(ctx, "images", "user-iso", "")
+	if err == nil || !strings.Contains(err.Error(), "without plugin ownership") {
+		t.Fatalf("expected ownership refusal, got %v", err)
+	}
+	if _, err := cdiClient.CdiV1beta1().DataVolumes("images").Get(ctx, "user-iso", metav1.GetOptions{}); err != nil {
+		t.Fatalf("unmanaged DataVolume was deleted: %v", err)
 	}
 }
 

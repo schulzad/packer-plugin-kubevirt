@@ -78,8 +78,9 @@ type Config struct {
 	// must be set.
 	IsoVolumeName string `mapstructure:"iso_volume_name" required:"false"`
 	// IsoURL is an HTTP or HTTPS URL that CDI importer pods can reach. The
-	// builder creates a DataVolume that CDI imports inside the cluster, and
-	// cleans it up after the build unless iso_retain is set.
+	// builder creates a DataVolume that CDI imports inside the cluster and
+	// keeps it after the build so later runs reuse the (often multi-GB) import;
+	// force a fresh import with `packer build -force` or delete the DataVolume.
 	IsoURL string `mapstructure:"iso_url" required:"false"`
 	// IsoStagingName is the name used for the builder-managed ISO DataVolume
 	// created for iso_url. Defaults to "<name>-iso".
@@ -93,9 +94,6 @@ type Config struct {
 	// sha256:, and sha512: followed by a hex digest. HTTP checksum validation is
 	// performed by CDI and requires CDI 1.65 or newer.
 	IsoChecksum string `mapstructure:"iso_checksum" required:"false"`
-	// IsoRetain preserves the builder-managed ISO DataVolume after the build so
-	// later builds can reuse it when its source identity matches.
-	IsoRetain bool `mapstructure:"iso_retain" required:"false"`
 	// IsoHTTPSecretRef names a Secret containing credentials for an HTTP source.
 	IsoHTTPSecretRef string `mapstructure:"iso_http_secret_ref" required:"false"`
 	// IsoHTTPCertConfigMap names a ConfigMap containing additional CAs for an
@@ -234,7 +232,7 @@ func (c *Config) Prepare(raws ...interface{}) ([]string, error) {
 
 	if c.IsoURL == "" {
 		if c.IsoStagingName != "" || c.IsoStorageSize != "" || c.IsoStorageClass != "" ||
-			c.IsoChecksum != "" || c.IsoRetain || c.IsoHTTPSecretRef != "" ||
+			c.IsoChecksum != "" || c.IsoHTTPSecretRef != "" ||
 			c.IsoHTTPCertConfigMap != "" || c.IsoStagingTimeout != 0 {
 			return nil, fmt.Errorf("managed ISO staging options cannot be combined with iso_volume_name")
 		}

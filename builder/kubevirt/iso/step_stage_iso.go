@@ -6,7 +6,6 @@ package iso
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/hashicorp/packer-plugin-kubevirt/builder/kubevirt/iso/staging"
 	"github.com/hashicorp/packer-plugin-sdk/multistep"
@@ -20,7 +19,8 @@ const (
 
 // StepStageISO resolves the configured installation-media source into a single
 // CDI DataVolume and publishes its name for VM creation. Plugin-created media is
-// removed during cleanup unless it is retained or still attached to the VM.
+// kept after the build so later runs reuse the import; it is never deleted
+// during cleanup. Externally managed DataVolumes are always preserved.
 type StepStageISO struct {
 	Config  Config
 	Manager *staging.Manager
@@ -43,7 +43,6 @@ func (s *StepStageISO) Run(ctx context.Context, state multistep.StateBag) multis
 		StorageSize:       s.Config.IsoStorageSize,
 		StorageClass:      s.Config.IsoStorageClass,
 		Checksum:          s.Config.IsoChecksum,
-		Retain:            s.Config.IsoRetain,
 		HTTPSecretRef:     s.Config.IsoHTTPSecretRef,
 		HTTPCertConfigMap: s.Config.IsoHTTPCertConfigMap,
 		Timeout:           s.Config.IsoStagingTimeout,
@@ -82,39 +81,12 @@ func (s *StepStageISO) Cleanup(state multistep.StateBag) {
 		}
 		return
 	}
-	if result.Retain || s.Config.KeepVM {
-		ui.Sayf("Retaining managed ISO DataVolume (%s/%s).", s.Config.Namespace, result.VolumeName)
-		return
-	}
-	// Only delete the imported media on a clean build. A halted or cancelled
-	// build keeps it so a re-run reuses the (often multi-GB) import instead of
-	// downloading it again. This mirrors Packer's common output-dir step, which
-	// preserves its output on cancel/halt.
-	_, cancelled := state.GetOk(multistep.StateCancelled)
-	_, halted := state.GetOk(multistep.StateHalted)
-	if cancelled || halted {
-		ui.Sayf(
-			"Build did not succeed; retaining managed ISO DataVolume (%s/%s) for reuse. "+
-				"Delete it with `packer build -force`, or `kubectl -n %s delete dv %s`, to force a re-import.",
-			s.Config.Namespace, result.VolumeName, s.Config.Namespace, result.VolumeName)
-		return
-	}
-	// Reverse-order cleanup runs after VM deletion. If the temporary VM was
-	// created but never confirmed detached, keep the media so we never delete a
-	// DataVolume a lingering VMI still references.
-	if created, _ := state.Get(stateTemporaryVMCreated).(bool); created {
-		if detached, _ := state.Get(stateTemporaryVMDetached).(bool); !detached {
-			ui.Errorf(
-				"Retaining managed ISO DataVolume %s/%s because the temporary VM did not fully detach",
-				s.Config.Namespace, result.VolumeName)
-			return
-		}
-	}
-
-	ui.Sayf("Deleting managed ISO DataVolume (%s/%s)...", s.Config.Namespace, result.VolumeName)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancel()
-	if err := s.Manager.Cleanup(ctx, s.Config.Namespace, result); err != nil {
-		ui.Errorf("Failed to clean managed ISO DataVolume: %v", err)
-	}
+	// Managed installation media is always kept after the build, on every path,
+	// so a later run reuses the (often multi-GB) import instead of downloading it
+	// again. A stale volume is replaced on the next run with `packer build
+	// -force`, or removed manually with kubectl.
+	ui.Sayf(
+		"Retaining managed ISO DataVolume (%s/%s) for reuse. "+
+			"Re-import with `packer build -force`, or delete it with `kubectl -n %s delete dv %s`.",
+		s.Config.Namespace, result.VolumeName, s.Config.Namespace, result.VolumeName)
 }

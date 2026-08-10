@@ -17,6 +17,7 @@ import (
 	"github.com/hashicorp/packer-plugin-sdk/multistep"
 	"github.com/hashicorp/packer-plugin-sdk/packer"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	fakek8sclient "k8s.io/client-go/kubernetes/fake"
@@ -187,6 +188,80 @@ var _ = Describe("StepCreateVirtualMachine", func() {
 			action := step.Run(ctx, state)
 			Expect(action).To(Equal(multistep.ActionHalt))
 			Expect(state.Get("temporary_vm_created")).To(BeTrue())
+		})
+
+		It("surfaces error PrintableStatus in diagnostics without aborting early", func() {
+			vmClient.Fake.PrependReactor("create", "virtualmachines", func(action k8stesting.Action) (bool, runtime.Object, error) {
+				create := action.(k8stesting.CreateAction)
+				obj := create.GetObject().(*v1.VirtualMachine)
+				obj.Status.Ready = false
+				obj.Status.PrintableStatus = v1.VirtualMachineStatusUnschedulable
+				obj.Status.Conditions = []v1.VirtualMachineCondition{{
+					Type:    v1.VirtualMachineFailure,
+					Status:  corev1.ConditionTrue,
+					Reason:  "Unschedulable",
+					Message: "0/3 nodes are available",
+				}}
+				return false, obj, nil
+			})
+
+			// A cancelled context stands in for the poll timeout so the test does
+			// not have to wait for the VM to become Ready.
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+
+			action := step.Run(ctx, state)
+			Expect(action).To(Equal(multistep.ActionHalt))
+			err, ok := state.Get("error").(error)
+			Expect(ok).To(BeTrue())
+			// Diagnostics are surfaced for visibility...
+			Expect(err.Error()).To(ContainSubstring("ErrorUnschedulable"))
+			Expect(err.Error()).To(ContainSubstring("0/3 nodes are available"))
+			// ...but the wait never self-aborts on the status; it ends via the
+			// context/timeout, not a plugin decision.
+			Expect(err.Error()).To(ContainSubstring("to become Ready"))
+			Expect(err.Error()).NotTo(ContainSubstring("entered error state"))
+		})
+
+		It("surfaces FailedAttachVolume in diagnostics without aborting early", func() {
+			vmClient.Fake.PrependReactor("create", "virtualmachines", func(action k8stesting.Action) (bool, runtime.Object, error) {
+				create := action.(k8stesting.CreateAction)
+				obj := create.GetObject().(*v1.VirtualMachine)
+				obj.Status.Ready = false
+				obj.Status.PrintableStatus = v1.VirtualMachineStatusStarting
+				return false, obj, nil
+			})
+
+			_, err := kubeClient.CoreV1().Events(namespace).Create(context.Background(), &corev1.Event{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      name + ".attach-fail",
+					Namespace: namespace,
+				},
+				InvolvedObject: corev1.ObjectReference{
+					Kind:      "VirtualMachineInstance",
+					Namespace: namespace,
+					Name:      name,
+				},
+				Reason:  "FailedAttachVolume",
+				Message: "AttachVolume.Attach failed for volume pvc-iso: volume is not ready for workloads",
+				Type:    corev1.EventTypeWarning,
+			}, metav1.CreateOptions{})
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+
+			action := step.Run(ctx, state)
+			Expect(action).To(Equal(multistep.ActionHalt))
+			waitErr, ok := state.Get("error").(error)
+			Expect(ok).To(BeTrue())
+			// The attach failure is surfaced for visibility...
+			Expect(waitErr.Error()).To(ContainSubstring("FailedAttachVolume"))
+			Expect(waitErr.Error()).To(ContainSubstring("volume is not ready for workloads"))
+			// ...but the plugin does not decide to fail on it; the wait ends via
+			// the context/timeout, not a 2-minute self-abort.
+			Expect(waitErr.Error()).To(ContainSubstring("to become Ready"))
+			Expect(waitErr.Error()).NotTo(ContainSubstring("volume attach failed"))
 		})
 	})
 

@@ -5,8 +5,9 @@
 // single CDI DataVolume the temporary VM can attach as its CD-ROM. It supports
 // two sources: an existing, user-managed DataVolume referenced by name, and an
 // HTTP(S) URL that CDI imports inside the cluster. CDI performs all data
-// movement; this package only creates, validates, waits on, and (for plugin-
-// created media) cleans up DataVolume objects.
+// movement; this package only creates, validates, and waits on DataVolume
+// objects. Managed media is kept after the build for reuse; it is removed only
+// when a forced re-import (`packer build -force`) replaces it.
 package staging
 
 import (
@@ -81,7 +82,6 @@ type Options struct {
 	StorageSize       string
 	StorageClass      string
 	Checksum          string
-	Retain            bool
 	HTTPSecretRef     string
 	HTTPCertConfigMap string
 	Timeout           time.Duration
@@ -89,14 +89,12 @@ type Options struct {
 	Progress          func(format string, args ...any)
 }
 
-// Result is the resolved DataVolume plus the ownership metadata cleanup needs.
+// Result is the resolved DataVolume plus the ownership metadata later steps need.
 type Result struct {
 	VolumeName string
 	VolumeUID  string
 	Owned      bool
-	Retain     bool
 	Kind       SourceKind
-	Identity   Identity
 }
 
 // Manager resolves ISO sources against a CDI client.
@@ -125,7 +123,6 @@ func (m *Manager) resolveExisting(ctx context.Context, opts Options) (Result, er
 	result := Result{
 		VolumeName: opts.ExistingVolume,
 		Kind:       SourceExisting,
-		Identity:   Identity{Kind: SourceExisting},
 	}
 	if opts.Progress != nil {
 		opts.Progress("Validating existing ISO DataVolume (%s/%s)...", opts.Namespace, opts.ExistingVolume)
@@ -148,9 +145,7 @@ func (m *Manager) stageHTTP(ctx context.Context, opts Options) (Result, error) {
 	}
 	result := Result{
 		VolumeName: opts.VolumeName,
-		Retain:     opts.Retain,
 		Kind:       SourceHTTP,
-		Identity:   identity,
 	}
 
 	desired, err := httpDataVolume(opts, identity)
@@ -199,9 +194,9 @@ func (m *Manager) stageHTTP(ctx context.Context, opts Options) (Result, error) {
 
 	// An API server that silently prunes the requested source (e.g. CDI < 1.65
 	// dropping spec.source.http.checksum) must never be accepted as valid media,
-	// and such a pruned object is never a reusable cache entry.
+	// and such a pruned object is never reused: validateHTTPDataVolume rejects it
+	// again on a later run, so a fresh import requires `packer build -force`.
 	if err := validateHTTPDataVolume(dv, opts, identity); err != nil {
-		result.Retain = false
 		return result, fmt.Errorf(
 			"the API server did not preserve the requested HTTP ISO source (iso_checksum requires CDI 1.65+): %w", err)
 	}
@@ -218,25 +213,10 @@ func (m *Manager) stageHTTP(ctx context.Context, opts Options) (Result, error) {
 	return result, nil
 }
 
-// Cleanup deletes a plugin-created, non-retained DataVolume after verifying it
-// is still the exact object this build created.
-func (m *Manager) Cleanup(ctx context.Context, namespace string, result Result) error {
-	if !result.Owned || result.Retain || result.VolumeName == "" {
-		return nil
-	}
-	dv, err := m.CDI.CdiV1beta1().DataVolumes(namespace).Get(ctx, result.VolumeName, metav1.GetOptions{})
-	if apierrors.IsNotFound(err) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	if err := validateCleanupIdentity(dv, result); err != nil {
-		return err
-	}
-	return m.deleteManagedDataVolume(ctx, namespace, result.VolumeName, result.VolumeUID)
-}
-
+// deleteManagedDataVolume removes a plugin-created DataVolume, refusing to touch
+// anything without the plugin's ownership markers or whose UID no longer matches
+// the object this build created. It backs forced re-imports (`packer build
+// -force`); a normal build always retains its managed installation media.
 func (m *Manager) deleteManagedDataVolume(ctx context.Context, namespace, name, expectedUID string) error {
 	dv, err := m.CDI.CdiV1beta1().DataVolumes(namespace).Get(ctx, name, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
@@ -415,24 +395,6 @@ func managedAnnotations(identity Identity, state string) map[string]string {
 func isManaged(dv *cdiv1.DataVolume) bool {
 	return dv != nil && dv.Annotations[AnnotationManaged] == "true" &&
 		dv.Labels[LabelManagedBy] == ManagedByValue
-}
-
-func validateCleanupIdentity(dv *cdiv1.DataVolume, result Result) error {
-	if !isManaged(dv) {
-		return fmt.Errorf("refusing to clean DataVolume without plugin ownership markers")
-	}
-	if result.VolumeUID != "" && string(dv.UID) != result.VolumeUID {
-		return fmt.Errorf("refusing to clean replacement DataVolume with UID %s", dv.UID)
-	}
-	annotations := dv.GetAnnotations()
-	if annotations[AnnotationSourceKind] != string(result.Kind) {
-		return fmt.Errorf("refusing to clean DataVolume whose source kind changed")
-	}
-	if result.Kind == SourceHTTP && result.Identity.URLHash != "" &&
-		annotations[AnnotationSourceURLHash] != result.Identity.URLHash {
-		return fmt.Errorf("refusing to clean DataVolume whose HTTP source identity changed")
-	}
-	return nil
 }
 
 func (m *Manager) patchImportState(ctx context.Context, namespace, name, state string) error {

@@ -52,20 +52,18 @@ downloads or re-uploads the ISO.
 iso_url          = "https://mirror.example.com/rocky.iso"
 iso_storage_size = "12Gi"
 # iso_checksum   = "sha256:<64-character digest>"
-iso_retain       = true
 ```
 
-By default the builder deletes the managed DataVolume after a **successful**
-build. A **failed or cancelled** build keeps it, so a re-run reuses the (often
-multi-GB) import instead of downloading it again — delete it with
-`packer build -force` or `kubectl -n <ns> delete dv <name>-iso` to force a fresh
-import. Set `iso_retain = true` to keep it even after a successful build as a
-reusable cache entry; a retained volume is reused on a later build only when its
-source URL, checksum, size, and storage class still match. `iso_http_secret_ref` and `iso_http_cert_config_map` can
-reference credentials and additional certificate authorities in the build
-namespace. HTTP checksum validation is performed by CDI and requires CDI 1.65 or
-newer; if the API server prunes the `checksum` field, the builder fails before
-accepting the imported media.
+The builder keeps this managed DataVolume after the build — on success as well as
+on a failed or cancelled run — so a later build reuses the (often multi-GB)
+import instead of downloading it again. A retained volume is reused only when its
+source URL, checksum, size, and storage class still match; force a fresh import
+with `packer build -force`, or remove it with `kubectl -n <ns> delete dv
+<name>-iso`. `iso_http_secret_ref` and `iso_http_cert_config_map` can reference
+credentials and additional certificate authorities in the build namespace. HTTP
+checksum validation is performed by CDI and requires CDI 1.65 or newer; if the
+API server prunes the `checksum` field, the builder fails before accepting the
+imported media.
 
 ### Existing DataVolume
 
@@ -115,8 +113,9 @@ deletes** a DataVolume supplied through `iso_volume_name`.
   must be set.
 
 - `iso_url` (string) - IsoURL is an HTTP or HTTPS URL that CDI importer pods can reach. The
-  builder creates a DataVolume that CDI imports inside the cluster, and
-  cleans it up after the build unless iso_retain is set.
+  builder creates a DataVolume that CDI imports inside the cluster and
+  keeps it after the build so later runs reuse the (often multi-GB) import;
+  force a fresh import with `packer build -force` or delete the DataVolume.
 
 - `iso_staging_name` (string) - IsoStagingName is the name used for the builder-managed ISO DataVolume
   created for iso_url. Defaults to "<name>-iso".
@@ -129,9 +128,6 @@ deletes** a DataVolume supplied through `iso_volume_name`.
 - `iso_checksum` (string) - IsoChecksum verifies the imported media. Supported formats are md5:, sha1:,
   sha256:, and sha512: followed by a hex digest. HTTP checksum validation is
   performed by CDI and requires CDI 1.65 or newer.
-
-- `iso_retain` (bool) - IsoRetain preserves the builder-managed ISO DataVolume after the build so
-  later builds can reuse it when its source identity matches.
 
 - `iso_http_secret_ref` (string) - IsoHTTPSecretRef names a Secret containing credentials for an HTTP source.
 

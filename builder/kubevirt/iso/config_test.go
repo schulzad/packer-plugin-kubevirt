@@ -100,7 +100,7 @@ var _ = Describe("Config ISO sources", func() {
 	It("rejects staging options for an externally managed DataVolume", func() {
 		raw := baseRaw()
 		raw["iso_volume_name"] = "existing"
-		raw["iso_retain"] = true
+		raw["iso_storage_size"] = "12Gi"
 		var config iso.Config
 
 		_, err := config.Prepare(raw)

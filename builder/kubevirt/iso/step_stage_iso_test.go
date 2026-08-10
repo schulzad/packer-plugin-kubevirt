@@ -14,7 +14,6 @@ import (
 	"github.com/hashicorp/packer-plugin-sdk/packer"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	k8stesting "k8s.io/client-go/testing"
@@ -82,7 +81,7 @@ var _ = Describe("StepStageISO", func() {
 		Expect(rawErr).To(MatchError(ContainSubstring("not found")))
 	})
 
-	It("imports an HTTP URL and cleans up the managed DataVolume", func() {
+	It("imports an HTTP URL and retains the managed DataVolume for reuse", func() {
 		cdiClient.Fake.PrependReactor("create", "datavolumes", func(action k8stesting.Action) (bool, runtime.Object, error) {
 			dv := action.(k8stesting.CreateAction).GetObject().(*cdiv1.DataVolume)
 			dv.Status.Phase = cdiv1.Succeeded
@@ -97,12 +96,14 @@ var _ = Describe("StepStageISO", func() {
 		Expect(action).To(Equal(multistep.ActionContinue))
 		Expect(state.Get("iso_volume_name")).To(Equal(volumeName))
 
+		// A successful build keeps the managed import so a later run reuses it
+		// instead of downloading the ISO again.
 		step.Cleanup(state)
 		_, err := cdiClient.CdiV1beta1().DataVolumes(namespace).Get(context.Background(), volumeName, metav1.GetOptions{})
-		Expect(apierrors.IsNotFound(err)).To(BeTrue())
+		Expect(err).NotTo(HaveOccurred())
 	})
 
-	It("retains managed media when the build is halted so a re-run reuses the import", func() {
+	It("retains managed media on cleanup so a re-run reuses the import", func() {
 		_, err := cdiClient.CdiV1beta1().DataVolumes(namespace).Create(
 			context.Background(),
 			&cdiv1.DataVolume{
@@ -121,34 +122,6 @@ var _ = Describe("StepStageISO", func() {
 			Owned:      true,
 			Kind:       staging.SourceHTTP,
 		})
-		state.Put(multistep.StateHalted, true)
-
-		step.Cleanup(state)
-
-		_, err = cdiClient.CdiV1beta1().DataVolumes(namespace).Get(context.Background(), volumeName, metav1.GetOptions{})
-		Expect(err).NotTo(HaveOccurred())
-	})
-
-	It("retains managed media when the temporary VM did not detach", func() {
-		_, err := cdiClient.CdiV1beta1().DataVolumes(namespace).Create(
-			context.Background(),
-			&cdiv1.DataVolume{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:        volumeName,
-					Namespace:   namespace,
-					Labels:      map[string]string{staging.LabelManagedBy: staging.ManagedByValue},
-					Annotations: map[string]string{staging.AnnotationManaged: "true"},
-				},
-			},
-			metav1.CreateOptions{},
-		)
-		Expect(err).NotTo(HaveOccurred())
-		state.Put("iso_staging_result", staging.Result{
-			VolumeName: volumeName,
-			Owned:      true,
-			Kind:       staging.SourceHTTP,
-		})
-		state.Put("temporary_vm_created", true)
 
 		step.Cleanup(state)
 

@@ -35,8 +35,8 @@ source "kubevirt-iso" "fedora" {
   # instancetype-only VM, and KubeVirt forbids combining an instance_type with
   # explicit cpu/memory -- so set one path or the other.
   disk_size = "20Gi"
-  cpu_cores = 2
-  memory    = "4Gi"
+  cpu_cores = 4
+  memory    = "16Gi"
 
   preference      = "fedora"
   preference_kind = "virtualmachineclusterpreference" # or "virtualmachinepreference"
@@ -69,7 +69,7 @@ source "kubevirt-iso" "fedora" {
     "<leftCtrlOn>x<leftCtrlOff>"        # Boot with modified command line
   ]
   boot_wait                 = "10s" # Time to wait after boot starts
-  installation_wait_timeout = "15m" # Timeout for installation to complete
+  installation_wait_timeout = "5m" # Timeout for installation to complete
 
   # SSH configuration
   communicator     = "ssh"

@@ -3,7 +3,7 @@ Seedscript module description language 2.3
 Module("KubeVirtImageBuilder") {
   description: "Specifies a second builder, kubevirt-image, that builds a golden image FROM an existing base image instead of installing from an ISO — the KubeVirt/CDI analogue of QEMU's disk_image=true. It resolves exactly one base source (a prior build's CDI DataSource, an existing PVC or VolumeSnapshot, or an external disk-image URL/registry) into the temporary VM's working root disk, boots that disk directly (no ISO, no CD-ROM, no boot_command, no kickstart), seeds first-boot credentials via cloud-init or sysprep so Packer can connect, provisions over SSH/WinRM, and captures the working disk as a new CDI DataSource. Layering stays entirely within CDI: build A emits a DataSource, build B clones it. Producing a Harvester VirtualMachineImage is an explicit non-goal handled downstream. The result is always a full, independent volume (CDI clone/import), never a qcow2 backing-file chain; use_backing_file has no CDI equivalent and is intentionally unsupported."
   metaphor: "Sediment laid in strata: each build presses a new, complete layer onto the ones beneath it. There is no tracing-paper overlay that merely points back at the layer below (no backing file) — every stratum is a solid slab you can stand on by itself."
-  version: "0.1.0"
+  version: "0.2.0"
   tags: ["packer", "kubevirt", "cdi", "image", "clone", "layering", "golden-image", "builder"]
   theme: {
     visual_style: "sedimentary-strata",
@@ -280,6 +280,32 @@ Module("KubeVirtImageBuilder") {
   }
 
   Semantics {
+    implementation_status: |
+      IMPLEMENTED (feat/image-builder): the in-cluster layering path — clone an
+      existing CDI DataSource into the temporary VM's root disk, boot from it,
+      provision over SSH/WinRM, and capture a new DataSource (the
+      InClusterLayerFlow). It reuses the kubevirt-iso validate, VM-stop,
+      port-forward, and bootable-volume finalize steps; only the boot-from-disk VM
+      creation is net-new. The output artifact BuilderId is packer.kubevirt.image.
+      The implemented base selector is `source_datasource` (+ optional
+      `source_namespace`), which supersedes the design's `base_datasource`; future
+      sources follow the same `source_*` family. First-boot credential seeding
+      (cloud-init/sysprep) is NOT implemented — the clone path relies on the base
+      image already carrying working credentials.
+
+      PLANNED (separate slices, not yet built):
+        - source_pvc / source_snapshot: clone an existing PVC or VolumeSnapshot.
+        - source_image_url (+ source_checksum, retain_source): CDI-import an external
+          disk-image URL via the shared staging layer (ExternalImageFlow).
+        - source_registry: CDI-import a containerdisk/registry reference.
+        - cloud_init_user_data / sysprep: seed first-boot credentials when the base
+          has none.
+        - Refactor: lift the shared config + Network types + convertToNetwork +
+          SSH/WinRM step builders + the reused steps + Artifact into
+          builder/kubevirt/common so both builders depend on common (dropping the
+          image->iso dependency and the sharedISOConfig adapter). Gated on verifying
+          cross-package HCL2 (mapstructure-to-hcl2) generation for a shared Network type.
+
     configuration_contract: |
       New builder type: kubevirt-image. Exactly one base source:
         base_datasource   — a prior build's output DataSource (primary layering path)
@@ -312,13 +338,14 @@ Module("KubeVirtImageBuilder") {
         export-from-volume is the fragile path that tooling exists to work around.
 
     open_questions: |
+      - RESOLVED: two builders sharing internal packages (kubevirt-iso and kubevirt-image), not one
+        builder with a disk_image-style toggle. The clone path ships on this shape today via an
+        iso.Config adapter; the shared-internals refactor into builder/kubevirt/common is planned.
       - cloud-init user-data delivery: inline string vs file vs ConfigMap, and whether to synthesize a
         minimal user-data when the user only supplies ssh_username/password.
       - For URL bases: always stage into a retained-capable managed DataVolume (reuse cache), or allow a
         direct http-populated root disk when the user does not want a cache? Default: stage, to get
         retain-on-failure and avoid re-downloading multi-GB base images.
-      - VolumeSnapshot base support likely gates on CSI snapshot capability; may ship after DataSource/PVC.
-      - Whether kubevirt-iso and kubevirt-image should share one builder with a disk_image-style toggle,
-        or remain two builders sharing internal packages. Leaning two builders, shared internals.
+      - VolumeSnapshot base support likely gates on CSI snapshot capability; may ship after PVC.
   }
 }

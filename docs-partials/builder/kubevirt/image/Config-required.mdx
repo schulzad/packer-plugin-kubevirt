@@ -1,0 +1,17 @@
+<!-- Code generated from the comments of the Config struct in builder/kubevirt/image/config.go; DO NOT EDIT MANUALLY -->
+
+- `kube_config` (string) - KubeConfig is the path to the kubeconfig file.
+
+- `name` (string) - Name is the name of the produced VM image (DataSource).
+
+- `namespace` (string) - Namespace is the namespace in which to create the temporary VM and the
+  output image.
+
+- `source_datasource` (string) - SourceDataSource is the name of an existing CDI DataSource to build from —
+  typically a prior build's output. Its contents are cloned (a full,
+  independent copy) into the temporary VM's root disk.
+
+- `disk_size` (string) - DiskSize is the size of the temporary VM's root disk. It must be at least
+  the source image's virtual size.
+
+<!-- End of code generated from the comments of the Config struct in builder/kubevirt/image/config.go; -->

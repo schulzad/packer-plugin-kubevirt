@@ -14,12 +14,20 @@ type Artifact struct {
 	Name string
 	// Namespace is the Kubernetes namespace the DataSource lives in.
 	Namespace string
+	// BuilderID identifies the builder that produced this artifact (for
+	// post-processor matching). Defaults to the kubevirt-iso builder id when
+	// empty so existing callers keep working; the kubevirt-image builder sets
+	// its own.
+	BuilderID string
 	// StateData holds generated_data and any other state shared with
 	// post-processors and HCP Packer.
 	StateData map[string]any
 }
 
 func (a *Artifact) BuilderId() string {
+	if a.BuilderID != "" {
+		return a.BuilderID
+	}
 	return "packer.kubevirt.iso"
 }
 

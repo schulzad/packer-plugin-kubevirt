@@ -20,11 +20,13 @@ To get started, see the [Packer installation guide](https://developer.hashicorp.
 - **ISO Sources** – Use an existing CDI DataVolume, or have CDI import a cluster-reachable ISO URL (the plugin manages this DataVolume and keeps it after the build so later runs reuse the import).
 - **ISO Media Files** – Embed additional files into installation process (e.g. `ks.cfg` or `unattend.xml`).
 - **Boot Command** – Automate the VM boot process using a set of commands (via a VNC connection).
+- **Image Layering** – Build golden images from an existing image with the `kubevirt-image` builder: CDI clones a base DataSource (e.g. a prior build), you provision it, and it captures a new DataSource you can layer on again.
 - **Integrated SSH/WinRM Access** – Allows VM provisioning and customization via SSH or WinRM.
 
 ## Components
 
 - `kubevirt-iso` - This builder starts from a ISO file and builds virtual machine image on a KubeVirt cluster.
+- `kubevirt-image` - This builder starts from an existing base image (a CDI DataSource) and builds a new golden image on a KubeVirt cluster.
 
 ### Design
 
@@ -75,4 +77,4 @@ $ packer plugins install --path packer-plugin-kubevirt github.com/hashicorp/kube
 
 ## Usage
 
-Refer to the usage guidance in the [examples](./examples/builder/kubevirt-iso) of this plugin.
+Refer to the usage guidance in the [examples](./examples/builder) of this plugin.

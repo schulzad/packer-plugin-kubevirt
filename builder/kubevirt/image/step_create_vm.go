@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"time"
 
+	kubevirtcommon "github.com/hashicorp/packer-plugin-kubevirt/builder/kubevirt/common"
 	"github.com/hashicorp/packer-plugin-sdk/multistep"
 	"github.com/hashicorp/packer-plugin-sdk/packer"
 
@@ -183,7 +184,7 @@ func imageVirtualMachine(c Config, forwardPorts []v1.Port) *v1.VirtualMachine {
 		},
 		ObjectMeta: metav1.ObjectMeta{Name: c.Name},
 		Spec: v1.VirtualMachineSpec{
-			RunStrategy: ptr.To(v1.RunStrategyAlways),
+			RunStrategy: ptr.To(kubevirtcommon.RunStrategyForShutdownCommand(c.ShutdownCommand)),
 			DataVolumeTemplates: []v1.DataVolumeTemplateSpec{
 				{
 					ObjectMeta: metav1.ObjectMeta{Name: c.Name + "-rootdisk"},

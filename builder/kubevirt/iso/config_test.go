@@ -107,4 +107,28 @@ var _ = Describe("Config ISO sources", func() {
 
 		Expect(err).To(MatchError(ContainSubstring("managed ISO staging options")))
 	})
+
+	It("rejects a shutdown_command without a communicator", func() {
+		raw := baseRaw()
+		raw["iso_volume_name"] = "existing"
+		raw["shutdown_command"] = "shutdown /s /t 10"
+		var config iso.Config
+
+		_, err := config.Prepare(raw)
+
+		Expect(err).To(MatchError(ContainSubstring("shutdown_command requires")))
+	})
+
+	It("defaults shutdown_timeout when a shutdown_command is set", func() {
+		raw := baseRaw()
+		raw["iso_volume_name"] = "existing"
+		raw["communicator"] = "winrm"
+		raw["shutdown_command"] = "shutdown /s /t 10"
+		var config iso.Config
+
+		_, err := config.Prepare(raw)
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(config.ShutdownTimeout).To(Equal(5 * time.Minute))
+	})
 })

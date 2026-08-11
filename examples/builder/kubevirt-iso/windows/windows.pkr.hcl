@@ -15,6 +15,16 @@ variable "kube_config" {
   default = "${env("KUBECONFIG")}"
 }
 
+# `seal` is a TEMPLATE concept, not a plugin setting. It only selects which
+# opaque command is handed to the builder's generic shutdown_command below; the
+# plugin knows nothing about Sysprep or generalization. Set -var seal=false to
+# power off without generalizing (handy for validating a build by hand), then
+# rebuild with seal=true (default) to produce the clone-ready image.
+variable "seal" {
+  type    = bool
+  default = true
+}
+
 source "kubevirt-iso" "windows" {
   # Kubernetes configuration
   kube_config = var.kube_config
@@ -75,6 +85,15 @@ source "kubevirt-iso" "windows" {
   winrm_username     = "Administrator"
   winrm_password     = "shadowman"
   winrm_wait_timeout = "25m"
+
+  # Final guest-initiated power-off, run after provisioning over the communicator.
+  # The builder just runs this command and waits (up to shutdown_timeout) for the
+  # guest to power itself off before capturing the disk; because a command is set,
+  # the temporary VM runs with RunStrategy=RerunOnFailure so a clean power-off
+  # stays down instead of being auto-restarted. Sysprep /shutdown belongs here (not
+  # in a provisioner) so the WinRM disconnect at power-off is expected, not an error.
+  shutdown_command = var.seal ? "C:\\Windows\\System32\\Sysprep\\sysprep.exe /generalize /oobe /shutdown /mode:vm" : "shutdown /s /t 10 /f /c \"build complete (unsealed)\""
+  shutdown_timeout = "30m"
 }
 
 build {
@@ -87,9 +106,7 @@ build {
     ]
   }
 
-  provisioner "windows-shell" {
-    inline = [
-      "C:\\Windows\\System32\\Sysprep\\sysprep.exe /generalize /oobe /shutdown /mode:vm"
-    ]
-  }
+  # Note: the Sysprep /generalize seal is the final power-off and is issued via
+  # shutdown_command (above), not a provisioner, so the WinRM disconnect when the
+  # guest powers off is handled rather than treated as a failure.
 }

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //go:generate packer-sdc struct-markdown
-//go:generate packer-sdc mapstructure-to-hcl2 -type Config,Network,NetworkSource,PodNetwork,MultusNetwork
+//go:generate packer-sdc mapstructure-to-hcl2 -type Config,ExtraMedia,Network,NetworkSource,PodNetwork,MultusNetwork
 
 package iso
 
@@ -64,6 +64,22 @@ type MultusNetwork struct {
 	// Select the default network and add it to the
 	// multus-cni.io/default-network annotation.
 	Default bool `mapstructure:"default,omitempty"`
+}
+
+// ExtraMedia is an additional, read-only medium attached to the temporary build
+// VM (for example an installer payload staged as a CDI DataVolume). It is never
+// part of the captured image.
+type ExtraMedia struct {
+	// DataVolume is the name of an existing CDI DataVolume in the build namespace
+	// to attach read-only. It is typically staged out-of-band (e.g. by
+	// `harvester-image stage-iso`); this builder only attaches it.
+	DataVolume string `mapstructure:"data_volume" required:"true"`
+	// As is the device kind: "cdrom" (default, read-only) or "disk".
+	As string `mapstructure:"as" required:"false"`
+	// Name is the disk device name; a unique name is generated when empty.
+	Name string `mapstructure:"name" required:"false"`
+	// Bus is the device bus: "scsi" (default), "sata", "virtio", or "usb".
+	Bus string `mapstructure:"bus" required:"false"`
 }
 
 type Config struct {
@@ -155,6 +171,11 @@ type Config struct {
 	// Networks is a list of networks to attach to the temporary VM.
 	// If no networks are specified, a single pod network will be used.
 	Networks []Network `mapstructure:"networks" required:"false"`
+	// ExtraMedia is a list of additional, read-only media to attach to the
+	// temporary VM (for example an installer payload staged as a CDI
+	// DataVolume). Each entry is attached as a read-only CD-ROM by default and
+	// is never part of the captured image.
+	ExtraMedia []ExtraMedia `mapstructure:"extra_media" required:"false"`
 	// MediaFiles is a path list of files to be copied and used during the ISO installation.
 	MediaFiles []string `mapstructure:"media_files" required:"false"`
 	// BootCommand is a list of strings that represent the keystrokes to be sent to the VM console
@@ -318,5 +339,40 @@ func (c *Config) Prepare(raws ...interface{}) ([]string, error) {
 			return nil, fmt.Errorf("network %q: only one of pod or multus can be defined", n.Name)
 		}
 	}
+
+	if err := validateExtraMedia(c.ExtraMedia); err != nil {
+		return nil, err
+	}
 	return warnings, nil
+}
+
+func validateExtraMedia(items []ExtraMedia) error {
+	reserved := map[string]bool{"rootdisk": true, "cdrom": true, "oemdrv": true, "sysprep": true, "virtiocontainerdisk": true}
+	seen := map[string]bool{}
+	for i := range items {
+		m := items[i]
+		if strings.TrimSpace(m.DataVolume) == "" {
+			return fmt.Errorf("extra_media[%d]: data_volume must be set", i)
+		}
+		switch m.As {
+		case "", "cdrom", "disk":
+		default:
+			return fmt.Errorf("extra_media[%d]: as must be cdrom or disk", i)
+		}
+		switch m.Bus {
+		case "", "scsi", "sata", "virtio", "usb":
+		default:
+			return fmt.Errorf("extra_media[%d]: bus must be scsi, sata, virtio, or usb", i)
+		}
+		if m.Name != "" {
+			if reserved[m.Name] {
+				return fmt.Errorf("extra_media[%d]: name %q collides with a reserved disk name", i, m.Name)
+			}
+			if seen[m.Name] {
+				return fmt.Errorf("extra_media[%d]: duplicate name %q", i, m.Name)
+			}
+			seen[m.Name] = true
+		}
+	}
+	return nil
 }

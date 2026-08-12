@@ -150,3 +150,40 @@ func TestPrepareErrors(t *testing.T) {
 		})
 	}
 }
+
+func TestPrepareExtraMediaValid(t *testing.T) {
+	var c Config
+	raw := baseRaw()
+	raw["extra_media"] = []map[string]any{{"data_volume": "cloudbase-media"}}
+	if _, err := c.Prepare(raw); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(c.ExtraMedia) != 1 || c.ExtraMedia[0].DataVolume != "cloudbase-media" {
+		t.Fatalf("extra_media not decoded: %+v", c.ExtraMedia)
+	}
+}
+
+func TestPrepareExtraMediaErrors(t *testing.T) {
+	cases := []struct {
+		name  string
+		media []map[string]any
+		sub   string
+	}{
+		{"missing data_volume", []map[string]any{{"as": "cdrom"}}, "data_volume"},
+		{"invalid as", []map[string]any{{"data_volume": "m", "as": "floppy"}}, "as must be"},
+		{"invalid bus", []map[string]any{{"data_volume": "m", "bus": "nvme"}}, "bus must be"},
+		{"reserved name", []map[string]any{{"data_volume": "m", "name": "rootdisk"}}, "reserved"},
+		{"duplicate name", []map[string]any{{"data_volume": "a", "name": "x"}, {"data_volume": "b", "name": "x"}}, "duplicate"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := baseRaw()
+			raw["extra_media"] = tc.media
+			var c Config
+			_, err := c.Prepare(raw)
+			if err == nil || !strings.Contains(err.Error(), tc.sub) {
+				t.Fatalf("expected error containing %q, got %v", tc.sub, err)
+			}
+		})
+	}
+}

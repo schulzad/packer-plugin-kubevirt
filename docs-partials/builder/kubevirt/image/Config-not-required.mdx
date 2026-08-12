@@ -25,6 +25,11 @@
 
 - `networks` ([]Network) - Networks is the list of networks to attach. Defaults to a single pod network.
 
+- `extra_media` ([]ExtraMedia) - ExtraMedia is a list of additional, read-only media to attach to the
+  temporary VM (for example an installer payload staged as a CDI
+  DataVolume). Each entry is attached as a read-only CD-ROM by default and
+  is never part of the captured image.
+
 - `communicator` (string) - Communicator is "ssh" or "winrm".
 
 - `ssh_host` (string) - SSHHost is the hostname or IP to connect via SSH.

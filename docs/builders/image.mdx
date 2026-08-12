@@ -98,6 +98,29 @@ credentials before connecting.
 > in the cluster, import it first (for example with the `kubevirt-iso` builder or
 > an external tool) and point `source_datasource` at the resulting DataSource.
 
+## Extra Media
+
+Attach additional, read-only media to the temporary build VM — for example a
+large installer payload — without streaming it into the guest over WinRM/SSH or
+squeezing it through a ConfigMap. Each `extra_media` block references an existing
+CDI `DataVolume` (staged out-of-band, e.g. by `harvester-image stage-iso`) and
+mounts it as a read-only CD-ROM. The media is attached only to the temporary VM
+and is never part of the captured image; the builder never assembles or uploads
+it — it only attaches what already exists in the cluster.
+
+```hcl
+extra_media {
+  data_volume = "cloudbase-media-ab12cd34"
+  # as   = "cdrom"   # default; or "disk"
+  # name = "cloudbase"
+  # bus  = "scsi"    # default
+}
+```
+
+@include 'builder/kubevirt/image/ExtraMedia-required.mdx'
+
+@include 'builder/kubevirt/image/ExtraMedia-not-required.mdx'
+
 ## Graceful Shutdown
 
 By default the builder stops the temporary VM through the KubeVirt API once

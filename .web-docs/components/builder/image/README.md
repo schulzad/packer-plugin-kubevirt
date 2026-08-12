@@ -85,6 +85,45 @@ credentials before connecting.
 > in the cluster, import it first (for example with the `kubevirt-iso` builder or
 > an external tool) and point `source_datasource` at the resulting DataSource.
 
+## Extra Media
+
+Attach additional, read-only media to the temporary build VM — for example a
+large installer payload — without streaming it into the guest over WinRM/SSH or
+squeezing it through a ConfigMap. Each `extra_media` block references an existing
+CDI `DataVolume` (staged out-of-band, e.g. by `harvester-image stage-iso`) and
+mounts it as a read-only CD-ROM. The media is attached only to the temporary VM
+and is never part of the captured image; the builder never assembles or uploads
+it — it only attaches what already exists in the cluster.
+
+```hcl
+extra_media {
+  data_volume = "cloudbase-media-ab12cd34"
+  # as   = "cdrom"   # default; or "disk"
+  # name = "cloudbase"
+  # bus  = "scsi"    # default
+}
+```
+
+<!-- Code generated from the comments of the ExtraMedia struct in builder/kubevirt/image/config.go; DO NOT EDIT MANUALLY -->
+
+- `data_volume` (string) - DataVolume is the name of an existing CDI DataVolume in the build namespace
+  to attach read-only. It is typically staged out-of-band (e.g. by
+  `harvester-image stage-iso`); this builder only attaches it.
+
+<!-- End of code generated from the comments of the ExtraMedia struct in builder/kubevirt/image/config.go; -->
+
+
+<!-- Code generated from the comments of the ExtraMedia struct in builder/kubevirt/image/config.go; DO NOT EDIT MANUALLY -->
+
+- `as` (string) - As is the device kind: "cdrom" (default, read-only) or "disk".
+
+- `name` (string) - Name is the disk device name; a unique name is generated when empty.
+
+- `bus` (string) - Bus is the device bus: "scsi" (default), "sata", "virtio", or "usb".
+
+<!-- End of code generated from the comments of the ExtraMedia struct in builder/kubevirt/image/config.go; -->
+
+
 ## Graceful Shutdown
 
 By default the builder stops the temporary VM through the KubeVirt API once
@@ -157,6 +196,11 @@ command versus a plain shutdown — is left entirely to your template.
 - `disk_interface` (string) - DiskInterface is the bus used by the root disk (virtio, sata, scsi, usb).
 
 - `networks` ([]Network) - Networks is the list of networks to attach. Defaults to a single pod network.
+
+- `extra_media` ([]ExtraMedia) - ExtraMedia is a list of additional, read-only media to attach to the
+  temporary VM (for example an installer payload staged as a CDI
+  DataVolume). Each entry is attached as a read-only CD-ROM by default and
+  is never part of the captured image.
 
 - `communicator` (string) - Communicator is "ssh" or "winrm".
 

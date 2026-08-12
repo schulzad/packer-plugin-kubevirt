@@ -131,4 +131,39 @@ var _ = Describe("Config ISO sources", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(config.ShutdownTimeout).To(Equal(5 * time.Minute))
 	})
+
+	It("accepts extra_media referencing a DataVolume", func() {
+		raw := baseRaw()
+		raw["iso_volume_name"] = "existing"
+		raw["extra_media"] = []map[string]any{{"data_volume": "cloudbase-media"}}
+		var config iso.Config
+
+		_, err := config.Prepare(raw)
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(config.ExtraMedia).To(HaveLen(1))
+		Expect(config.ExtraMedia[0].DataVolume).To(Equal("cloudbase-media"))
+	})
+
+	It("rejects extra_media without a data_volume", func() {
+		raw := baseRaw()
+		raw["iso_volume_name"] = "existing"
+		raw["extra_media"] = []map[string]any{{"as": "cdrom"}}
+		var config iso.Config
+
+		_, err := config.Prepare(raw)
+
+		Expect(err).To(MatchError(ContainSubstring("data_volume")))
+	})
+
+	It("rejects an extra_media name that collides with a builder disk", func() {
+		raw := baseRaw()
+		raw["iso_volume_name"] = "existing"
+		raw["extra_media"] = []map[string]any{{"data_volume": "m", "name": "cdrom"}}
+		var config iso.Config
+
+		_, err := config.Prepare(raw)
+
+		Expect(err).To(MatchError(ContainSubstring("reserved")))
+	})
 })

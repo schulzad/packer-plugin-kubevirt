@@ -419,3 +419,16 @@ func convertToNetwork(n Network, forwardPorts []v1.Port) (v1.Network, v1.Interfa
 	}
 	return vmNetwork, vmInterface
 }
+
+func extraMediaAttachments(items []ExtraMedia) []kubevirtcommon.ExtraMediaAttachment {
+	out := make([]kubevirtcommon.ExtraMediaAttachment, len(items))
+	for i, m := range items {
+		out[i] = kubevirtcommon.ExtraMediaAttachment{
+			DataVolume: m.DataVolume,
+			As:         m.As,
+			Name:       m.Name,
+			Bus:        m.Bus,
+		}
+	}
+	return out
+}

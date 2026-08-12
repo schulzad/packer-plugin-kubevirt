@@ -83,6 +83,45 @@ deletes** a DataVolume supplied through `iso_volume_name`.
 > (e.g. `virtctl image-upload` or a dedicated staging tool). Point
 > `iso_volume_name` at the resulting DataVolume.
 
+## Extra Media
+
+Attach additional, read-only media to the temporary build VM — for example a
+large installer payload — without streaming it into the guest over WinRM/SSH or
+squeezing it through a ConfigMap. Each `extra_media` block references an existing
+CDI `DataVolume` (staged out-of-band, e.g. by `harvester-image stage-iso`) and
+mounts it as a read-only CD-ROM. The media is attached only to the temporary VM
+and is never part of the captured image; the builder never assembles or uploads
+it — it only attaches what already exists in the cluster.
+
+```hcl
+extra_media {
+  data_volume = "cloudbase-media-ab12cd34"
+  # as   = "cdrom"   # default; or "disk"
+  # name = "cloudbase"
+  # bus  = "scsi"    # default
+}
+```
+
+<!-- Code generated from the comments of the ExtraMedia struct in builder/kubevirt/iso/config.go; DO NOT EDIT MANUALLY -->
+
+- `data_volume` (string) - DataVolume is the name of an existing CDI DataVolume in the build namespace
+  to attach read-only. It is typically staged out-of-band (e.g. by
+  `harvester-image stage-iso`); this builder only attaches it.
+
+<!-- End of code generated from the comments of the ExtraMedia struct in builder/kubevirt/iso/config.go; -->
+
+
+<!-- Code generated from the comments of the ExtraMedia struct in builder/kubevirt/iso/config.go; DO NOT EDIT MANUALLY -->
+
+- `as` (string) - As is the device kind: "cdrom" (default, read-only) or "disk".
+
+- `name` (string) - Name is the disk device name; a unique name is generated when empty.
+
+- `bus` (string) - Bus is the device bus: "scsi" (default), "sata", "virtio", or "usb".
+
+<!-- End of code generated from the comments of the ExtraMedia struct in builder/kubevirt/iso/config.go; -->
+
+
 ## Graceful Shutdown
 
 By default the builder stops the temporary VM through the KubeVirt API once
@@ -199,6 +238,11 @@ command versus a plain shutdown — is left entirely to your template.
 
 - `networks` ([]Network) - Networks is a list of networks to attach to the temporary VM.
   If no networks are specified, a single pod network will be used.
+
+- `extra_media` ([]ExtraMedia) - ExtraMedia is a list of additional, read-only media to attach to the
+  temporary VM (for example an installer payload staged as a CDI
+  DataVolume). Each entry is attached as a read-only CD-ROM by default and
+  is never part of the captured image.
 
 - `media_files` ([]string) - MediaFiles is a path list of files to be copied and used during the ISO installation.
 

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	kubevirtcommon "github.com/hashicorp/packer-plugin-kubevirt/builder/kubevirt/common"
 	"github.com/hashicorp/packer-plugin-sdk/multistep"
 	"github.com/hashicorp/packer-plugin-sdk/packer"
 
@@ -100,6 +101,17 @@ func (s *StepCreateVirtualMachine) Run(ctx context.Context, state multistep.Stat
 		s.Config.ShutdownCommand,
 		networks,
 		forwardPorts)
+
+	extraMedia := extraMediaAttachments(s.Config.ExtraMedia)
+	extraVolumes, extraDisks := kubevirtcommon.ExtraMediaDevices(extraMedia)
+	virtualMachine.Spec.Template.Spec.Domain.Devices.Disks = append(virtualMachine.Spec.Template.Spec.Domain.Devices.Disks, extraDisks...)
+	virtualMachine.Spec.Template.Spec.Volumes = append(virtualMachine.Spec.Template.Spec.Volumes, extraVolumes...)
+
+	if err := kubevirtcommon.PreflightExtraMedia(ctx, s.Client, namespace, extraMedia); err != nil {
+		state.Put("error", err)
+		ui.Error(err.Error())
+		return multistep.ActionHalt
+	}
 
 	ui.Sayf("Creating a new temporary VirtualMachine (%s/%s)...", namespace, name)
 

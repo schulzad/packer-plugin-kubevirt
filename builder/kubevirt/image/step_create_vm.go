@@ -55,6 +55,17 @@ func (s *StepCreateVM) Run(ctx context.Context, state multistep.StateBag) multis
 
 	virtualMachine := imageVirtualMachine(s.Config, forwardPortsFor(s.Config))
 
+	extraMedia := extraMediaAttachments(s.Config.ExtraMedia)
+	extraVolumes, extraDisks := kubevirtcommon.ExtraMediaDevices(extraMedia)
+	virtualMachine.Spec.Template.Spec.Domain.Devices.Disks = append(virtualMachine.Spec.Template.Spec.Domain.Devices.Disks, extraDisks...)
+	virtualMachine.Spec.Template.Spec.Volumes = append(virtualMachine.Spec.Template.Spec.Volumes, extraVolumes...)
+
+	if err := kubevirtcommon.PreflightExtraMedia(ctx, s.Client, namespace, extraMedia); err != nil {
+		state.Put("error", err)
+		ui.Error(err.Error())
+		return multistep.ActionHalt
+	}
+
 	ui.Sayf("Creating a temporary VirtualMachine (%s/%s) from base DataSource %s/%s...",
 		namespace, name, s.Config.SourceNamespace, s.Config.SourceDataSource)
 
@@ -281,4 +292,17 @@ func convertToNetwork(n Network, forwardPorts []v1.Port) (v1.Network, v1.Interfa
 		vmInterface.InterfaceBindingMethod.Bridge = &v1.InterfaceBridge{}
 	}
 	return vmNetwork, vmInterface
+}
+
+func extraMediaAttachments(items []ExtraMedia) []kubevirtcommon.ExtraMediaAttachment {
+	out := make([]kubevirtcommon.ExtraMediaAttachment, len(items))
+	for i, m := range items {
+		out[i] = kubevirtcommon.ExtraMediaAttachment{
+			DataVolume: m.DataVolume,
+			As:         m.As,
+			Name:       m.Name,
+			Bus:        m.Bus,
+		}
+	}
+	return out
 }

@@ -37,6 +37,7 @@ type FlatConfig struct {
 	OperatingSystemType *string           `mapstructure:"os_type" required:"false" cty:"os_type" hcl:"os_type"`
 	DiskInterface       *string           `mapstructure:"disk_interface" required:"false" cty:"disk_interface" hcl:"disk_interface"`
 	Networks            []FlatNetwork     `mapstructure:"networks" required:"false" cty:"networks" hcl:"networks"`
+	ExtraMedia          []FlatExtraMedia  `mapstructure:"extra_media" required:"false" cty:"extra_media" hcl:"extra_media"`
 	Communicator        *string           `mapstructure:"communicator" required:"false" cty:"communicator" hcl:"communicator"`
 	SSHHost             *string           `mapstructure:"ssh_host" required:"false" cty:"ssh_host" hcl:"ssh_host"`
 	SSHLocalPort        *int              `mapstructure:"ssh_local_port" required:"false" cty:"ssh_local_port" hcl:"ssh_local_port"`
@@ -94,6 +95,7 @@ func (*FlatConfig) HCL2Spec() map[string]hcldec.Spec {
 		"os_type":                    &hcldec.AttrSpec{Name: "os_type", Type: cty.String, Required: false},
 		"disk_interface":             &hcldec.AttrSpec{Name: "disk_interface", Type: cty.String, Required: false},
 		"networks":                   &hcldec.BlockListSpec{TypeName: "networks", Nested: hcldec.ObjectSpec((*FlatNetwork)(nil).HCL2Spec())},
+		"extra_media":                &hcldec.BlockListSpec{TypeName: "extra_media", Nested: hcldec.ObjectSpec((*FlatExtraMedia)(nil).HCL2Spec())},
 		"communicator":               &hcldec.AttrSpec{Name: "communicator", Type: cty.String, Required: false},
 		"ssh_host":                   &hcldec.AttrSpec{Name: "ssh_host", Type: cty.String, Required: false},
 		"ssh_local_port":             &hcldec.AttrSpec{Name: "ssh_local_port", Type: cty.Number, Required: false},
@@ -110,6 +112,35 @@ func (*FlatConfig) HCL2Spec() map[string]hcldec.Spec {
 		"boot_timeout":               &hcldec.AttrSpec{Name: "boot_timeout", Type: cty.String, Required: false},
 		"keep_vm":                    &hcldec.AttrSpec{Name: "keep_vm", Type: cty.Bool, Required: false},
 		"skip_create_image":          &hcldec.AttrSpec{Name: "skip_create_image", Type: cty.Bool, Required: false},
+	}
+	return s
+}
+
+// FlatExtraMedia is an auto-generated flat version of ExtraMedia.
+// Where the contents of a field with a `mapstructure:,squash` tag are bubbled up.
+type FlatExtraMedia struct {
+	DataVolume *string `mapstructure:"data_volume" required:"true" cty:"data_volume" hcl:"data_volume"`
+	As         *string `mapstructure:"as" required:"false" cty:"as" hcl:"as"`
+	Name       *string `mapstructure:"name" required:"false" cty:"name" hcl:"name"`
+	Bus        *string `mapstructure:"bus" required:"false" cty:"bus" hcl:"bus"`
+}
+
+// FlatMapstructure returns a new FlatExtraMedia.
+// FlatExtraMedia is an auto-generated flat version of ExtraMedia.
+// Where the contents a fields with a `mapstructure:,squash` tag are bubbled up.
+func (*ExtraMedia) FlatMapstructure() interface{ HCL2Spec() map[string]hcldec.Spec } {
+	return new(FlatExtraMedia)
+}
+
+// HCL2Spec returns the hcl spec of a ExtraMedia.
+// This spec is used by HCL to read the fields of ExtraMedia.
+// The decoded values from this spec will then be applied to a FlatExtraMedia.
+func (*FlatExtraMedia) HCL2Spec() map[string]hcldec.Spec {
+	s := map[string]hcldec.Spec{
+		"data_volume": &hcldec.AttrSpec{Name: "data_volume", Type: cty.String, Required: false},
+		"as":          &hcldec.AttrSpec{Name: "as", Type: cty.String, Required: false},
+		"name":        &hcldec.AttrSpec{Name: "name", Type: cty.String, Required: false},
+		"bus":         &hcldec.AttrSpec{Name: "bus", Type: cty.String, Required: false},
 	}
 	return s
 }

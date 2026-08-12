@@ -18,6 +18,8 @@ type FlatConfig struct {
 	PackerOnError       *string           `mapstructure:"packer_on_error" cty:"packer_on_error" hcl:"packer_on_error"`
 	PackerUserVars      map[string]string `mapstructure:"packer_user_variables" cty:"packer_user_variables" hcl:"packer_user_variables"`
 	PackerSensitiveVars []string          `mapstructure:"packer_sensitive_variables" cty:"packer_sensitive_variables" hcl:"packer_sensitive_variables"`
+	ShutdownCommand     *string           `mapstructure:"shutdown_command" required:"false" cty:"shutdown_command" hcl:"shutdown_command"`
+	ShutdownTimeout     *string           `mapstructure:"shutdown_timeout" required:"false" cty:"shutdown_timeout" hcl:"shutdown_timeout"`
 	KubeConfig          *string           `mapstructure:"kube_config" required:"true" cty:"kube_config" hcl:"kube_config"`
 	Name                *string           `mapstructure:"name" required:"true" cty:"name" hcl:"name"`
 	Namespace           *string           `mapstructure:"namespace" required:"true" cty:"namespace" hcl:"namespace"`
@@ -73,6 +75,8 @@ func (*FlatConfig) HCL2Spec() map[string]hcldec.Spec {
 		"packer_on_error":            &hcldec.AttrSpec{Name: "packer_on_error", Type: cty.String, Required: false},
 		"packer_user_variables":      &hcldec.AttrSpec{Name: "packer_user_variables", Type: cty.Map(cty.String), Required: false},
 		"packer_sensitive_variables": &hcldec.AttrSpec{Name: "packer_sensitive_variables", Type: cty.List(cty.String), Required: false},
+		"shutdown_command":           &hcldec.AttrSpec{Name: "shutdown_command", Type: cty.String, Required: false},
+		"shutdown_timeout":           &hcldec.AttrSpec{Name: "shutdown_timeout", Type: cty.String, Required: false},
 		"kube_config":                &hcldec.AttrSpec{Name: "kube_config", Type: cty.String, Required: false},
 		"name":                       &hcldec.AttrSpec{Name: "name", Type: cty.String, Required: false},
 		"namespace":                  &hcldec.AttrSpec{Name: "namespace", Type: cty.String, Required: false},

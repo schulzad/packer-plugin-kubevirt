@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 
+	kubevirtcommon "github.com/hashicorp/packer-plugin-kubevirt/builder/kubevirt/common"
+
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -55,6 +57,7 @@ func virtualMachine(
 	cpuCores,
 	cpuThreads uint32,
 	memory string,
+	shutdownCommand string,
 	networks []Network,
 	forwardPorts []v1.Port) *v1.VirtualMachine {
 	var disks []v1.Disk
@@ -94,7 +97,7 @@ func virtualMachine(
 			Name: name,
 		},
 		Spec: v1.VirtualMachineSpec{
-			RunStrategy: ptr.To(v1.RunStrategyAlways),
+			RunStrategy: ptr.To(kubevirtcommon.RunStrategyForShutdownCommand(shutdownCommand)),
 			DataVolumeTemplates: []v1.DataVolumeTemplateSpec{
 				{
 					ObjectMeta: metav1.ObjectMeta{

@@ -37,6 +37,22 @@ func TestPrepareValidCloneSource(t *testing.T) {
 	}
 }
 
+func TestPrepareShutdownDefaults(t *testing.T) {
+	var c Config
+	raw := baseRaw()
+	raw["communicator"] = "ssh"
+	raw["shutdown_command"] = "sudo shutdown -h now"
+	if _, err := c.Prepare(raw); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if c.ShutdownCommand != "sudo shutdown -h now" {
+		t.Errorf("shutdown_command = %q, want the configured command", c.ShutdownCommand)
+	}
+	if c.ShutdownTimeout != 5*time.Minute {
+		t.Errorf("shutdown_timeout default = %s, want 5m", c.ShutdownTimeout)
+	}
+}
+
 func TestPrepareSourceNamespaceOverride(t *testing.T) {
 	var c Config
 	raw := baseRaw()
@@ -106,6 +122,16 @@ func TestPrepareErrors(t *testing.T) {
 			name:    "invalid os_type",
 			mutate:  func(r map[string]any) { r["os_type"] = "plan9" },
 			wantSub: "os_type",
+		},
+		{
+			name:    "shutdown_command without communicator",
+			mutate:  func(r map[string]any) { r["shutdown_command"] = "shutdown -h now" },
+			wantSub: "shutdown_command requires",
+		},
+		{
+			name:    "negative shutdown_timeout",
+			mutate:  func(r map[string]any) { r["shutdown_timeout"] = "-1m" },
+			wantSub: "shutdown_timeout",
 		},
 	}
 

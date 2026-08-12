@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 
+	kubevirtcommon "github.com/hashicorp/packer-plugin-kubevirt/builder/kubevirt/common"
 	"github.com/hashicorp/packer-plugin-kubevirt/builder/kubevirt/iso/staging"
 	ssh "golang.org/x/crypto/ssh"
 
@@ -118,6 +119,13 @@ func (b *Builder) Run(ctx context.Context, ui packer.Ui, hook packer.Hook) (pack
 	}
 
 	steps = append(steps,
+		&kubevirtcommon.StepShutdown{
+			Client:          b.client,
+			Name:            b.config.Name,
+			Namespace:       b.config.Namespace,
+			ShutdownCommand: b.config.ShutdownCommand,
+			ShutdownTimeout: b.config.ShutdownTimeout,
+		},
 		&StepStopVirtualMachine{
 			Config: b.config,
 			Client: b.client,

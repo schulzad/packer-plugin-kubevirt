@@ -22,6 +22,7 @@ import (
 
 	"kubevirt.io/client-go/kubecli"
 
+	kubevirtcommon "github.com/hashicorp/packer-plugin-kubevirt/builder/kubevirt/common"
 	"github.com/hashicorp/packer-plugin-kubevirt/builder/kubevirt/iso"
 )
 
@@ -96,10 +97,19 @@ func (b *Builder) Run(ctx context.Context, ui packer.Ui, hook packer.Hook) (pack
 		steps = append(steps, b.buildWinRMSteps(shared)...)
 	}
 
-	steps = append(steps, &iso.StepStopVirtualMachine{
-		Config: shared,
-		Client: b.client,
-	})
+	steps = append(steps,
+		&kubevirtcommon.StepShutdown{
+			Client:          b.client,
+			Name:            b.config.Name,
+			Namespace:       b.config.Namespace,
+			ShutdownCommand: b.config.ShutdownCommand,
+			ShutdownTimeout: b.config.ShutdownTimeout,
+		},
+		&iso.StepStopVirtualMachine{
+			Config: shared,
+			Client: b.client,
+		},
+	)
 
 	if !b.config.SkipCreateImage {
 		steps = append(steps, &iso.StepCreateBootableVolume{

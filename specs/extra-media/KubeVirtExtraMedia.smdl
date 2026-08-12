@@ -1,0 +1,261 @@
+Seedscript module description language 2.3
+
+Module("KubeVirtExtraMedia") {
+  description: "Specifies how the KubeVirt builders attach ADDITIONAL, read-only media to the temporary build VM so provisioners can read large ancillary payloads (for example a ~65MB Cloudbase-Init installer) from a mounted CD-ROM/disk instead of streaming them into the guest over WinRM/SSH (slow) or through a ConfigMap (capped at ~1MB by etcd). It is the KubeVirt/CDI analogue of QEMU's and Proxmox's cd_files, adapted to the fact that KubeVirt can only attach disks that already live in the cluster. The plugin is deliberately guest-agnostic: it attaches a read-only volume and never inspects, mounts, or interprets what is on it — mirroring the shutdown_command boundary. The RECOMMENDED transport references a payload published once out-of-band (an OCI containerDisk image, an existing DataVolume/PVC, or a CDI-importable URL); building and publishing that payload is a harvester-image-tools concern, not the plugin's. A second, DEFERRED transport reuses the Packer SDK's cd_files/StepCreateCD to build a local ISO and CDI-upload it, giving the familiar cd_files ergonomics at the cost of the CDI upload-proxy plumbing this project already judged too heavy for the multi-GB ISO case."
+  metaphor: "A pallet delivered to the loading dock. The crate is packed and labeled elsewhere (harvester-image-tools), the cluster's crane sets it read-only on the workbench next to the machine being built, and the worker inside reads what they need off it. You do not hand-carry sixty-five one-megabyte boxes up the WinRM stairwell."
+  version: "0.1.0"
+  tags: ["packer", "kubevirt", "cdi", "media", "cd_files", "containerdisk", "provisioning", "large-payload"]
+  theme: {
+    visual_style: "loading-dock-and-pallet",
+    color_palette: ["#20303A", "#3E5C66", "#6E8894", "#C7B08B"],
+    metaphorical_language: "loading dock, palletized crate, read-only shelf, crane lift, reference cart"
+  }
+
+  components: {
+    Roots {
+      Directive("/attach_extra_media") {
+        description: "Entry point: resolve each configured extra-media reference into a read-only volume + disk on the temporary build VM, in addition to the boot/root disks. Guest-agnostic — the builder never reads or mounts the media; the guest does. Applies to BOTH kubevirt-iso and kubevirt-image, and does not alter the captured root disk (extra media is build-time scaffolding, never part of the golden image)."
+        metaphor: "Wheel the labeled pallet up to the workbench and lock its brakes; the worker decides what to take off it."
+        parameters: {
+          namespace: { type: "string", description: "Build namespace of the temporary VM.", required: true },
+          extra_media: { type: "array", description: "Zero or more read-only media entries; each entry is exactly one source kind (container_disk | data_volume | url) plus attachment options (as = cdrom|disk, name/serial, bus).", required: false }
+        }
+        actions: {
+          validate: "Reject entries with zero or multiple source kinds, malformed URLs, a URL source missing storage_size, or a disk name colliding with rootdisk/cdrom/oemdrv/sysprep/virtiocontainerdisk.",
+          resolve: "Turn each entry into a KubeVirt volume + disk: reference an OCI containerDisk or an existing DataVolume directly, or stage a URL/registry source through the shared staging layer.",
+          attach: "Append the resolved read-only volumes and CD-ROM/disk devices to the temporary VM spec.",
+          hand_off: "Record which media were plugin-managed (URL-imported) so cleanup can release only those."
+        }
+        kernel: "ExtraMediaKernel"
+        tags: ["entry", "read-only", "guest-agnostic", "both-builders"]
+      }
+
+      Directive("/release_extra_media") {
+        description: "Reverse-order cleanup. Detachment is implicit when the temporary VM is deleted; this only deletes plugin-managed (URL/registry-imported) media per ownership and retain-on-failure policy. Referenced media — an OCI containerDisk, a user's existing DataVolume/PVC — is never deleted."
+        metaphor: "Return only the crates you had delivered for this job; never touch the customer's own pallets."
+        parameters: {
+          namespace: { type: "string", description: "Build namespace.", required: true }
+        }
+        actions: {
+          clean: "Delete plugin-owned imported media DataVolumes on success; retain them on failure for reuse; leave referenced media untouched."
+        }
+        kernel: "ExtraMediaKernel"
+        tags: ["cleanup", "ownership-boundary", "reverse-order"]
+      }
+    }
+
+    Bloom {
+      Function("validate_media_source") {
+        description: "Validate a single extra-media entry: exactly one of container_disk, data_volume, or url is set; a url is a well-formed http(s) URL with a positive storage_size and optional checksum; the attachment mode is cdrom or disk; and the disk name does not collide with the builder's reserved disks."
+        metaphor: "Check the shipping label: one crate per manifest line, addressed correctly, and it will not sit where another crate already stands."
+        input_parameters: {
+          entry: { type: "object", description: "One extra_media entry (source selectors + attachment options).", required: true },
+          reserved_disk_names: { type: "array", description: "Names already used by the builder (rootdisk, cdrom, oemdrv, sysprep, virtiocontainerdisk).", required: true }
+        }
+        output_format: {
+          media_kind: "One of container_disk, data_volume, or url.",
+          normalized_entry: "Validated, defaulted attachment options (mode, name, bus)."
+        }
+        tags: ["pure", "validation", "fail-fast"]
+      }
+
+      Function("resolve_reference_media") {
+        description: "For a container_disk (OCI image reference) or a data_volume (existing in-cluster DataVolume/PVC name), produce the KubeVirt volume source directly, WITHOUT importing or copying and WITHOUT taking ownership. A containerDisk is pulled by the container runtime cluster-side (the same mechanism the Windows builds already use for virtio drivers); an existing DataVolume is referenced by name."
+        metaphor: "Point at a pallet already in the yard; the crane lifts it as-is."
+        input_parameters: {
+          media_kind: { type: "string", description: "container_disk | data_volume.", required: true },
+          reference: { type: "string", description: "OCI image ref, or DataVolume/PVC name in the namespace.", required: true }
+        }
+        output_format: {
+          volume_source: "A KubeVirt VolumeSource (containerDisk or dataVolume) for the temporary VM.",
+          owned: "Always false; referenced media is never owned by the build."
+        }
+        tags: ["containerdisk", "reference", "external-ownership", "read-only"]
+      }
+
+      Function("stage_url_media") {
+        description: "For a url/registry source, import it into a managed CDI DataVolume via the shared staging layer, then reference that DataVolume as the media volume. Honors the same ownership, retain, retain-on-failure, and identity-guard rules as ISO staging so a failed build reuses the import."
+        metaphor: "Have the depot fetch an outside crate once, keep it in the yard, and lift copies onto the bench each build."
+        input_parameters: {
+          namespace: { type: "string", description: "Target namespace.", required: true },
+          url_or_registry: { type: "string", description: "HTTP(S) or registry source CDI imports.", required: true },
+          storage_size: { type: "quantity", description: "Managed media DataVolume capacity (required for URL imports).", required: true },
+          checksum: { type: "string", description: "Optional CDI checksum (requires CDI 1.65+).", required: false }
+        }
+        output_format: {
+          volume_source: "A dataVolume VolumeSource referencing the imported media.",
+          owned: "True when created by this build.",
+          volume_uid: "UID recorded for identity-safe cleanup."
+        }
+        tags: ["cdi", "import", "reuses-staging", "cache"]
+      }
+
+      Function("build_local_media") {
+        description: "DEFERRED (Transport A). Reuse the Packer SDK's commonsteps.CDConfig + StepCreateCD to bundle cd_files/cd_content into a local ISO (cd_path), then CDI-upload that ISO into a managed DataVolume. Gives the familiar cd_files ergonomics but requires a host ISO tool (xorriso/mkisofs/oscdimg) and the CDI upload-proxy plumbing (upload-source DataVolume, token, uploadproxy route, TLS) that this project already judged too heavy for multi-GB ISOs; acceptable only because these payloads are small."
+        metaphor: "Crate the loose boxes here, then truck the crate to the depot before the crane can lift it — an extra leg the reference path avoids."
+        input_parameters: {
+          cd_files: { type: "array", description: "Files/directories written to the ISO root.", required: false },
+          cd_content: { type: "object", description: "Inline filename to content map.", required: false },
+          namespace: { type: "string", description: "Target namespace for the uploaded media DataVolume.", required: true }
+        }
+        output_format: {
+          volume_source: "A dataVolume VolumeSource referencing the uploaded media.",
+          owned: "True; always plugin-managed."
+        }
+        tags: ["deferred", "cd_files", "reuses-sdk", "cdi-upload", "host-tool"]
+      }
+
+      Function("attach_media_disk") {
+        description: "Append the resolved read-only volume and its disk device (CD-ROM by default, or a data disk) to the temporary VM. The device is never the boot/root disk and is excluded from the captured image; it exists only for the provisioning phase."
+        metaphor: "Set the pallet on the bench, brakes locked, read-only tag facing out."
+        input_parameters: {
+          volume_source: { type: "object", description: "Resolved containerDisk or dataVolume source.", required: true },
+          attachment: { type: "object", description: "Mode (cdrom|disk), disk name/serial, and bus.", required: true }
+        }
+        output_format: {
+          vm_media: "A (volume, disk) pair added to the temporary VM spec."
+        }
+        tags: ["kubevirt", "cdrom", "read-only", "reuses-resources"]
+      }
+
+      Function("cleanup_managed_media") {
+        description: "Delete a plugin-managed (URL/registry-imported or cd_files-uploaded) media DataVolume only when the build succeeded, the media is not retained, its identity still matches, and the VM has detached. Referenced containerDisks and user DataVolumes are never deleted. Mirrors ISO staging: a failed/cancelled build retains managed media for reuse."
+        metaphor: "On a clean job, send the depot's crates back; on a scrubbed job, leave them staged for next time; never ship out the customer's own."
+        input_parameters: {
+          namespace: { type: "string", description: "Namespace.", required: true },
+          managed_media: { type: "array", description: "Ownership, retain, and UID of each plugin-managed medium.", required: true },
+          build_succeeded: { type: "bool", description: "Whether the build completed cleanly.", required: true }
+        }
+        output_format: {
+          deleted: "Which plugin-managed media were removed."
+        }
+        tags: ["cleanup", "reuses-staging", "retain-on-failure", "safe-delete"]
+      }
+    }
+
+    Sprout {
+      Chain("ReferenceMediaFlow") {
+        description: "RECOMMENDED. Attach a payload published once out-of-band: reference an OCI containerDisk (or an existing DataVolume) and mount it read-only. The cluster pulls it; nothing is streamed from the Packer host or through the guest."
+        metaphor: "Lift a pre-crated pallet from the yard straight onto the bench."
+        links: [
+          { source: "/attach_extra_media", target: "validate_media_source" },
+          { source: "validate_media_source", target: "resolve_reference_media" },
+          { source: "resolve_reference_media", target: "attach_media_disk" }
+        ]
+        tags: ["recommended", "containerdisk", "reference", "linear"]
+      }
+
+      Chain("ImportMediaFlow") {
+        description: "Attach a payload from a URL/registry: CDI imports it into a managed DataVolume via the shared staging layer, then mounts it read-only."
+        metaphor: "Have the depot fetch and crate an outside item once, then lift it onto the bench."
+        links: [
+          { source: "/attach_extra_media", target: "validate_media_source" },
+          { source: "validate_media_source", target: "stage_url_media" },
+          { source: "stage_url_media", target: "attach_media_disk" }
+        ]
+        tags: ["cdi", "import", "reuses-staging", "linear"]
+      }
+
+      Chain("LocalMediaFlow") {
+        description: "DEFERRED (Transport A). Build an ISO locally from cd_files via the SDK, CDI-upload it into a managed DataVolume, then mount it read-only."
+        metaphor: "Crate loose boxes here, truck them to the depot, then lift onto the bench."
+        links: [
+          { source: "/attach_extra_media", target: "validate_media_source" },
+          { source: "validate_media_source", target: "build_local_media" },
+          { source: "build_local_media", target: "attach_media_disk" }
+        ]
+        tags: ["deferred", "cd_files", "cdi-upload", "linear"]
+      }
+
+      Chain("MediaCleanupFlow") {
+        description: "Reverse-order teardown: the temporary VM's deletion detaches the media; then release only plugin-managed imports per retention policy. Referenced media is preserved."
+        metaphor: "Clear the bench, return the depot's crates, leave the customer's pallets in the yard."
+        links: [
+          { source: "/release_extra_media", target: "cleanup_managed_media" }
+        ]
+        tags: ["cleanup", "reverse-order"]
+      }
+    }
+
+    Kernels {
+      Kernel("ExtraMediaKernel") {
+        description: "Governs attaching build-time-only media to the temporary VM entirely within cluster-native primitives: reference a published payload (preferred), import a URL through CDI, or (deferred) build+upload from cd_files — always attached read-only, never part of the captured image, and always opaque to the plugin."
+        metaphor: "The dock foreman's rules: crates arrive pre-labeled, ride the crane not the stairs, sit read-only beside the bench, and only the depot's own crates go back."
+        directive_chains: ["ReferenceMediaFlow", "ImportMediaFlow", "LocalMediaFlow", "MediaCleanupFlow"]
+        invariants: [
+          "The plugin is guest-agnostic: it attaches a read-only volume and never reads, mounts, or interprets the payload (no Cloudbase-Init/Sysprep/cloud-init knowledge in plugin code).",
+          "Extra media is attached only to the temporary build VM and is never captured into the golden image; it is build-time scaffolding.",
+          "All media is attached read-only.",
+          "KubeVirt attaches only in-cluster disks: a payload reaches the VM as an OCI containerDisk (pulled cluster-side by the container runtime), an existing DataVolume/PVC (referenced), or a CDI-imported DataVolume — never streamed into the guest over WinRM/SSH.",
+          "ConfigMap/Secret and cloudInit/Sysprep volumes remain for small (<1MB) configuration only; extra media is the lane for large payloads.",
+          "Referenced media (containerDisk image, user DataVolume/PVC) is never owned, mutated, or deleted by the build; only plugin-imported media follows staging ownership, identity-guard, retain, and retain-on-failure rules.",
+          "Building and publishing the payload (e.g. producing the OCI containerDisk image) is out of scope and handled by harvester-image-tools; the plugin only consumes a reference.",
+          "The mechanism is shared by both builders (kubevirt-iso and kubevirt-image).",
+          "The deferred cd_files transport, if added, reuses the Packer SDK's StepCreateCD and a one-shot CDI upload; it never becomes the only path."
+        ]
+        tags: ["governor", "cdi-native", "read-only", "ownership", "guest-agnostic"]
+      }
+    }
+  }
+
+  Semantics {
+    recommended_transport: |
+      Transport B (reference a published payload) is the recommendation for the first
+      implementation:
+        - The cluster does the data movement (container runtime pulls the containerDisk,
+          or CDI imports a URL) — no 65MB stream from the Packer host and none over WinRM.
+        - It matches the plugin's existing "point at cluster-native media" philosophy
+          (iso_volume_name, source_datasource) and the virtio-container-disk precedent the
+          Windows builds already rely on.
+        - It sidesteps the CDI upload-proxy plumbing that this project deliberately dropped
+          for the multi-GB ISO case.
+      Transport A (cd_files -> local ISO -> CDI upload) is captured as a later ergonomic
+      add-on, not part of the first cut.
+
+    configuration_contract: |
+      New optional config on BOTH builders: extra_media, a list. Each entry sets exactly
+      one source kind and optional attachment options:
+        container_disk : OCI image reference (mounted via a KubeVirt containerDisk volume)
+        data_volume    : name of an existing DataVolume/PVC in the namespace
+        url            : HTTP(S)/registry source CDI imports (+ storage_size, optional checksum)
+      Attachment options (all optional):
+        as   : "cdrom" (default) or "disk"
+        name : disk name/serial (defaults to a generated, collision-checked name)
+        bus  : "sata" | "scsi" | "virtio" (sensible default per as/os)
+      Deferred (Transport A): cd_files / cd_content / cd_label, reusing the SDK's CDConfig.
+
+    reuse_map: |
+      Reuses today's plumbing:
+        - staging.Manager             -> stage_url_media (import + ownership + retain-on-failure)
+        - resources volume/disk build -> attach_media_disk (append volumes + disks)
+        - containerDisk pattern       -> resolve_reference_media (already used for virtio drivers)
+        - StepStopVirtualMachine / VM cleanup detaches media implicitly on VM deletion
+      Net-new: extra_media validation/resolution and read-only disk attachment.
+      Deferred reuse: commonsteps.CDConfig + StepCreateCD (Transport A) and a CDI upload step.
+
+    publishing_boundary: |
+      The payload artifact (e.g. a Cloudbase-Init installer bundled as an OCI containerDisk
+      image, or a CDI-importable disk) is BUILT AND PUBLISHED by harvester-image-tools, out
+      of band from a packer build. The plugin only accepts a reference and attaches it. This
+      keeps guest-specific packaging (what goes on the media, how it is laid out) entirely
+      outside the plugin, exactly like seal scripts stay in the template for shutdown_command.
+
+    out_of_scope: |
+      - Building or publishing the payload OCI image / artifact (harvester-image-tools).
+      - Transport A (cd_files -> local ISO -> CDI upload) in the first implementation.
+      - Writable or persistent media; extra media is read-only, build-time-only, and never captured.
+      - Interpreting or installing the payload; that is the provisioner's/guest's job.
+
+    open_questions: |
+      - extra_media schema shape: a list of typed objects (container_disk/data_volume/url) vs
+        parallel scalar fields. Leaning a typed list for multiple media and clean validation.
+      - Default attachment device: cdrom vs disk. cdrom + iso9660 gives Windows a predictable
+        drive letter and read-only semantics; a data disk may need in-guest mount. Leaning cdrom.
+      - Whether to import URL media through the retained-capable staging cache (like ISO media)
+        or attach a direct CDI source; leaning staging for retain-on-failure parity.
+      - When to add Transport A (cd_files) — only if the upload-proxy reachability and host ISO
+        tool dependency prove worth the ergonomics.
+      - Exact containerDisk expectations (image layout, pull secret, pull policy) to document so
+        harvester-image-tools and the plugin agree on the artifact contract.
+  }
+}

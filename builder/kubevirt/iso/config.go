@@ -14,7 +14,9 @@ import (
 	"time"
 
 	"github.com/hashicorp/packer-plugin-sdk/common"
+	"github.com/hashicorp/packer-plugin-sdk/shutdowncommand"
 	"github.com/hashicorp/packer-plugin-sdk/template/config"
+	"github.com/hashicorp/packer-plugin-sdk/template/interpolate"
 	"k8s.io/apimachinery/pkg/api/resource"
 	k8svalidation "k8s.io/apimachinery/pkg/util/validation"
 )
@@ -66,6 +68,11 @@ type MultusNetwork struct {
 
 type Config struct {
 	common.PackerConfig `mapstructure:",squash"`
+	// ShutdownConfig provides the same generic shutdown_command and
+	// shutdown_timeout contract used by other Packer builders. The command is
+	// opaque to this plugin; it may perform any guest preparation before
+	// powering off.
+	shutdowncommand.ShutdownConfig `mapstructure:",squash"`
 
 	// KubeConfig is the path to the kubeconfig file.
 	KubeConfig string `mapstructure:"kube_config" required:"true"`
@@ -212,6 +219,12 @@ func (c *Config) Prepare(raws ...interface{}) ([]string, error) {
 		return nil, err
 	}
 	var warnings []string
+	if errs := c.ShutdownConfig.Prepare(interpolate.NewContext()); len(errs) != 0 {
+		return nil, errs[0]
+	}
+	if c.ShutdownTimeout < 0 {
+		return nil, fmt.Errorf("shutdown_timeout must be greater than zero")
+	}
 
 	if c.DiskBus == "" {
 		c.DiskBus = "scsi"
@@ -294,6 +307,10 @@ func (c *Config) Prepare(raws ...interface{}) ([]string, error) {
 	}
 	if c.InstanceType == "" && c.Memory == "" {
 		return nil, fmt.Errorf("either instance_type or memory (with optional cpu_sockets/cpu_cores/cpu_threads) must be set")
+	}
+	if strings.TrimSpace(c.ShutdownCommand) != "" &&
+		c.Communicator != "ssh" && c.Communicator != "winrm" {
+		return nil, fmt.Errorf("shutdown_command requires an ssh or winrm communicator")
 	}
 
 	for _, n := range c.Networks {

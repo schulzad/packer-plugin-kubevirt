@@ -163,6 +163,21 @@ func TestPrepareExtraMediaValid(t *testing.T) {
 	}
 }
 
+func TestPrepareExtraMediaSHA512(t *testing.T) {
+	var c Config
+	raw := baseRaw()
+	raw["extra_media"] = []map[string]any{{"data_volume": "m", "sha512": strings.ToUpper(sampleSHA512)}}
+	if _, err := c.Prepare(raw); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if c.ExtraMedia[0].SHA512 != sampleSHA512 {
+		t.Fatalf("sha512 not normalized: %q", c.ExtraMedia[0].SHA512)
+	}
+}
+
+const sampleSHA512 = "cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce" +
+	"47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e"
+
 func TestPrepareExtraMediaErrors(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -174,6 +189,7 @@ func TestPrepareExtraMediaErrors(t *testing.T) {
 		{"invalid bus", []map[string]any{{"data_volume": "m", "bus": "nvme"}}, "bus must be"},
 		{"reserved name", []map[string]any{{"data_volume": "m", "name": "rootdisk"}}, "reserved"},
 		{"duplicate name", []map[string]any{{"data_volume": "a", "name": "x"}, {"data_volume": "b", "name": "x"}}, "duplicate"},
+		{"invalid sha512", []map[string]any{{"data_volume": "m", "sha512": "deadbeef"}}, "sha512"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

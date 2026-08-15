@@ -107,7 +107,7 @@ func virtualMachine(
 						PVC: &corev1.PersistentVolumeClaimSpec{
 							Resources: corev1.VolumeResourceRequirements{
 								Requests: corev1.ResourceList{
-									corev1.ResourceName(corev1.ResourceStorage): resource.MustParse(diskSize),
+									corev1.ResourceStorage: resource.MustParse(diskSize),
 								},
 							},
 							AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
@@ -196,7 +196,7 @@ func cloneVolume(name, namespace, diskSize string) *cdiv1.DataVolume {
 			PVC: &corev1.PersistentVolumeClaimSpec{
 				Resources: corev1.VolumeResourceRequirements{
 					Requests: corev1.ResourceList{
-						corev1.ResourceName(corev1.ResourceStorage): resource.MustParse(diskSize),
+						corev1.ResourceStorage: resource.MustParse(diskSize),
 					},
 				},
 				AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
@@ -428,6 +428,7 @@ func extraMediaAttachments(items []ExtraMedia) []kubevirtcommon.ExtraMediaAttach
 			As:         m.As,
 			Name:       m.Name,
 			Bus:        m.Bus,
+			SHA512:     m.SHA512,
 		}
 	}
 	return out

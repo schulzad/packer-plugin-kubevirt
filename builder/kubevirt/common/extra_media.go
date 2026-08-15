@@ -7,10 +7,7 @@ import (
 	"context"
 	"fmt"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-
 	v1 "kubevirt.io/api/core/v1"
-	"kubevirt.io/client-go/kubecli"
 )
 
 // ExtraMediaAttachment is a builder-agnostic description of one additional,
@@ -26,6 +23,10 @@ type ExtraMediaAttachment struct {
 	Name string
 	// Bus is the device bus; defaults to "scsi".
 	Bus string
+	// SHA512 optionally pins the media content digest (bare lowercase SHA-512
+	// hex). When set and the DataVolume is stage-managed, it must equal the
+	// harvester-image-tools/stage-content-sha512 marker or preflight fails closed.
+	SHA512 string
 }
 
 // ExtraMediaDeviceName returns the device name for the i-th entry, generating a
@@ -68,15 +69,25 @@ func ExtraMediaDevices(items []ExtraMediaAttachment) ([]v1.Volume, []v1.Disk) {
 	return volumes, disks
 }
 
-// PreflightExtraMedia fails fast if any referenced extra-media DataVolume is
-// absent from the namespace, so the build errors clearly instead of stalling on
-// a missing volume at VM create. Content integrity of a staged DataVolume is
-// the stager's responsibility (e.g. `harvester-image stage-iso`'s SHA-512 gate),
-// not the plugin's; this only confirms the volume the pipeline promised exists.
-func PreflightExtraMedia(ctx context.Context, client kubecli.KubevirtClient, namespace string, items []ExtraMediaAttachment) error {
+// PreflightExtraMedia blocks until every referenced extra-media DataVolume is
+// ready for the temporary build VM to attach, so the build errors clearly (or
+// waits explicitly) instead of stalling on a missing volume — or silently
+// attaching a blank one — at VM create. It fails fast when a referenced
+// DataVolume is absent.
+//
+// For a stage-iso DataVolume, readiness gates on the stage-complete marker (never
+// CDI phase, which reports Succeeded on a blank Block volume before its bytes are
+// staged); any other DataVolume falls back to ordinary CDI-phase readiness. When
+// an entry carries an expected SHA512, it is pinned against the stage marker.
+// Assembling and staging the content remain the pipeline's job (e.g.
+// `harvester-image stage-iso`'s SHA-512 gate); this only consumes what exists.
+func PreflightExtraMedia(ctx context.Context, client MediaReadyClient, namespace string, items []ExtraMediaAttachment, progress func(format string, args ...any)) error {
 	for _, m := range items {
-		if _, err := client.CdiClient().CdiV1beta1().DataVolumes(namespace).Get(ctx, m.DataVolume, metav1.GetOptions{}); err != nil {
-			return fmt.Errorf("resolve extra_media DataVolume %s/%s: %w", namespace, m.DataVolume, err)
+		if err := WaitUntilMediaReady(ctx, client, namespace, m.DataVolume, MediaReadyOptions{
+			ExpectedSHA512: m.SHA512,
+			Progress:       progress,
+		}); err != nil {
+			return fmt.Errorf("extra_media: %w", err)
 		}
 	}
 	return nil

@@ -104,6 +104,15 @@ extra_media {
 }
 ```
 
+When a `data_volume` was produced by `harvester-image stage-iso`, the builder
+gates readiness on the `harvester-image-tools/stage-complete` annotation on the
+volume's bound PVC rather than on the CDI phase — a blank Block `stage-iso`
+volume reports `Succeeded` (bound) before its bytes are staged, so trusting the
+phase could attach a blank or half-staged disk. Any other DataVolume falls back
+to ordinary CDI-phase readiness. Optionally set `sha512` on the entry to pin the
+expected SHA-512 against the `harvester-image-tools/stage-content-sha512` marker
+and fail closed on a mismatch.
+
 <!-- Code generated from the comments of the ExtraMedia struct in builder/kubevirt/image/config.go; DO NOT EDIT MANUALLY -->
 
 - `data_volume` (string) - DataVolume is the name of an existing CDI DataVolume in the build namespace
@@ -120,6 +129,11 @@ extra_media {
 - `name` (string) - Name is the disk device name; a unique name is generated when empty.
 
 - `bus` (string) - Bus is the device bus: "scsi" (default), "sata", "virtio", or "usb".
+
+- `sha512` (string) - SHA512 optionally pins the media content digest. When set and the
+  referenced DataVolume was produced by `harvester-image stage-iso`, it must
+  equal the volume's harvester-image-tools/stage-content-sha512 marker or the
+  build fails closed. Accepts a bare SHA-512 hex digest or a "sha512:"-prefixed one.
 
 <!-- End of code generated from the comments of the ExtraMedia struct in builder/kubevirt/image/config.go; -->
 

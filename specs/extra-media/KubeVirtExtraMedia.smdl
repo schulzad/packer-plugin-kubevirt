@@ -2,8 +2,8 @@ Seedscript module description language 2.3
 
 Module("KubeVirtExtraMedia") {
   description: "Specifies how the KubeVirt builders (kubevirt-iso and kubevirt-image) attach ADDITIONAL, read-only media to the temporary build VM so provisioners can read large ancillary payloads (for example a ~65MB Cloudbase-Init installer) off a mounted CD-ROM instead of streaming them into the guest over WinRM/SSH (slow) or through a ConfigMap (capped at ~1MB by etcd). It is the KubeVirt/CDI analogue of QEMU's cd_files, adapted to the fact that KubeVirt can only attach disks that already live in the cluster. The plugin's role is deliberately NARROW and guest-agnostic: it takes a reference to media that already exists in the cluster and attaches it read-only; it never bundles files, builds an ISO, streams bytes, or interprets the payload — mirroring the shutdown_command boundary. The AIRGAP-PRIMARY source is an existing CDI DataVolume (data_volume) that was staged out-of-band — the airgap-first pipeline builds the ISO with vdi-factory and pushes it into the cluster with `harvester-image stage-iso` (resumable dd-over-exec), exactly the path already proven for iso_volume_name. Two connected-cluster alternatives exist: container_disk (an OCI containerDisk the container runtime pulls) and url (a cluster-reachable HTTP source CDI imports). WHO builds and stages the payload — reading the media declaration, assembling the ISO, and calling stage-iso — is a vdi-factory + harvester-image-tools concern (see vdi_factory MediaStaging and HarvesterImageStageISO), never the plugin's."
-  metaphor: "A pallet delivered to the loading dock. The crate is packed, labeled, and hauled through the airlock elsewhere (vdi-factory + harvester-image-tools); the cluster's crane sets it read-only on the workbench next to the machine being built, and the worker inside reads what they need off it. The builder is only the crane operator — it never packs the crate."
-  version: "0.3.0"
+  metaphor: "A pallet delivered to the loading dock. The crate is packed, labeled, and hauled through the airlock elsewhere (vdi-factory + harvester-image-tools); the cluster's crane sets it read-only on the workbench next to the machine being built, and the worker inside reads what they need off it. The builder is only the crane operator — it never packs the crate, and it waits for the shipper's stage-complete seal before lifting a bonded (stage-iso) crate."
+  version: "0.4.0"
   tags: ["packer", "kubevirt", "cdi", "media", "cd_files", "datavolume", "containerdisk", "provisioning", "large-payload", "airgap"]
   theme: {
     visual_style: "loading-dock-and-pallet",
@@ -21,7 +21,7 @@ Module("KubeVirtExtraMedia") {
           extra_media: { type: "array", description: "Zero or more read-only media entries; each entry sets exactly one source kind (data_volume | container_disk | url) plus attachment options (as = cdrom|disk, name/serial, bus).", required: false }
         }
         actions: {
-          validate: "Reject entries with zero or multiple source kinds, a malformed url, a url missing storage_size, or a disk name colliding with rootdisk/cdrom/oemdrv/sysprep/virtiocontainerdisk. For a data_volume, PREFLIGHT that it is builder-ready before create: content-verified (NOT merely DataVolume phase Succeeded, which for a blank Block DV means only bound, before bytes are written), expected Block/size shape, and RWO-free (no stage tap pod still attached); fail fast otherwise.",
+          validate: "Reject entries with zero or multiple source kinds, a malformed url, a url missing storage_size, or a disk name colliding with rootdisk/cdrom/oemdrv/sysprep/virtiocontainerdisk. For a data_volume, PREFLIGHT readiness before create: if it is a stage-iso artifact (stage labels / harvester-image-tools/stage-* annotations), wait for harvester-image-tools/stage-complete==\"true\" on its bound PVC — NEVER trust CDI phase Succeeded, which for a blank Block DV means only bound, before bytes are written — and optionally pin the entry's sha512 to harvester-image-tools/stage-content-sha512; otherwise wait for ordinary CDI-phase readiness. Fail fast if the DataVolume is absent.",
           resolve: "Turn each entry into a KubeVirt volume + disk: reference an existing DataVolume or an OCI containerDisk directly, or (connected clusters) CDI-import a url via the shared staging layer.",
           attach: "Append the resolved read-only volumes and CD-ROM/disk devices to the temporary VM spec.",
           hand_off: "Record which media (if any) were plugin-managed (url-imported) so cleanup releases only those."
@@ -166,7 +166,7 @@ Module("KubeVirtExtraMedia") {
           "Referenced media (data_volume, container_disk) is never owned, mutated, or deleted by the build; only plugin-imported (url) media follows staging ownership, identity-guard, retain, and retain-on-failure rules.",
           "The mechanism is shared by both builders (kubevirt-iso and kubevirt-image) and reuses the existing CD-ROM DataVolume attach.",
           "Declaring WHAT files go on the media, assembling the ISO, and staging it into the cluster are the pipeline's job (vdi-factory MediaStaging + harvester-image-tools), not the plugin's.",
-          "A referenced data_volume must be BUILDER-READY before attach: content-verified and RWO-free (stage tap detached). Never trust DataVolume.status.phase == Succeeded as proof the media is present — a blank Block DV is Succeeded once bound, before bytes are written.",
+          "A referenced data_volume must be BUILDER-READY before attach. When it is a harvester-image-tools stage-iso artifact (labels stage=true / stage-tag, or harvester-image-tools/stage-* annotations), readiness gates on harvester-image-tools/stage-complete==\"true\" on its bound PVC — NEVER on DataVolume.status.phase==Succeeded, which for a blank Block DV means bound (empty), before bytes are written — with an optional per-entry sha512 pinned to harvester-image-tools/stage-content-sha512 (fail closed on mismatch); any other DataVolume falls back to CDI-phase readiness. This is the same gate as iso_volume_name, implemented in the shared builder/kubevirt/common helper (WaitUntilMediaReady); see KubeVirtISOStaging stage_managed_readiness.",
           "extra_media is a VERSIONED feature: consumers pin a packer-plugin-kubevirt revision whose named builders (kubevirt-iso, kubevirt-image) implement it, and declare the extra_media block explicitly."
         ]
         tags: ["governor", "cdi-native", "read-only", "ownership", "guest-agnostic"]
@@ -194,9 +194,11 @@ Module("KubeVirtExtraMedia") {
         container_disk : OCI containerDisk image reference (connected/registry)
         url            : cluster-reachable HTTP(S) source CDI imports (+ storage_size, optional checksum) (connected)
       Attachment options (all optional):
-        as   : "cdrom" (default) or "disk"
-        name : disk name/serial (defaults to a generated, collision-checked name)
-        bus  : "sata" | "scsi" | "virtio" (sensible default per as/os)
+        as     : "cdrom" (default) or "disk"
+        name   : disk name/serial (defaults to a generated, collision-checked name)
+        bus    : "sata" | "scsi" | "virtio" (sensible default per as/os)
+        sha512 : expected content SHA-512 (bare hex or "sha512:"-prefixed) pinned against a stage-managed
+                 volume's harvester-image-tools/stage-content-sha512 marker; fail closed on mismatch
 
     reuse_map: |
       Reuses today's plumbing:

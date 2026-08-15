@@ -1,9 +1,9 @@
 Seedscript module description language 2.3
 
 Module("KubeVirtISOStaging") {
-  description: "Defines how the kubevirt-iso builder resolves installation media into one CDI DataVolume the temporary VM attaches as its CD-ROM. Two sources are supported: an existing user-managed DataVolume referenced by name, and an HTTP(S) URL that CDI imports inside the cluster. CDI performs all data movement; the plugin only creates, validates, waits on, and cleans up DataVolume objects. Staging a local file into the cluster is intentionally out of scope and left to an external tool that produces a DataVolume the builder then consumes by name."
-  metaphor: "A guarded loading dock routes each shipment through the correct bay and releases only identified media to the builder, never touching cargo it did not bring in."
-  version: "0.3.0"
+  description: "Defines how the kubevirt-iso builder resolves installation media into one CDI DataVolume the temporary VM attaches as its CD-ROM. Two sources are supported: an existing user-managed DataVolume referenced by name, and an HTTP(S) URL that CDI imports inside the cluster. CDI performs all data movement; the plugin only creates, validates, waits on, and cleans up DataVolume objects. Staging a local file into the cluster is intentionally out of scope and left to an external tool that produces a DataVolume the builder then consumes by name. When that external tool is harvester-image-tools `stage-iso` (the air-gapped substitute for `virtctl image-upload`), readiness MUST gate on the stage-complete marker rather than the CDI phase (see the stage_managed_readiness semantics) — this module absorbs that producer hand-off contract."
+  metaphor: "A guarded loading dock routes each shipment through the correct bay and releases only identified media to the builder, never touching cargo it did not bring in; for a bonded (stage-iso) crate it waits for the shipper's weight-and-seal ticket, not just the green bay light."
+  version: "0.4.0"
   tags: ["packer", "kubevirt", "cdi", "iso", "staging", "lifecycle"]
   theme: {
     visual_style: "guarded-loading-dock",
@@ -101,7 +101,7 @@ Module("KubeVirtISOStaging") {
       }
 
       Function("wait_for_datavolume") {
-        description: "Wait for CDI success while terminating immediately on Failed and surfacing phase, progress, and condition messages."
+        description: "Wait until a DataVolume is ready. For an ordinary source, ready == CDI status.phase==Succeeded, terminating immediately on Failed and surfacing phase, progress, and condition messages. For a stage-iso-managed volume, ready == harvester-image-tools/stage-complete==\"true\" on the bound PVC (CDI phase is not trusted, because a blank Block DV is Succeeded once bound, before its bytes are staged); an optional iso_digest is pinned to harvester-image-tools/stage-content-sha512."
         metaphor: "A bay monitor reports movement and raises an alarm instead of waiting silently on failed cargo."
         input_parameters: {
           namespace: { type: "string", description: "DataVolume namespace.", required: true },
@@ -210,7 +210,8 @@ Module("KubeVirtISOStaging") {
           "VM creation reads the resolved DataVolume name from multistep state rather than assuming configuration contains a pre-existing name.",
           "Plugin-owned media is never deleted by cleanup; it is retained for reuse on every path (success, failure, or cancel).",
           "Managed media is removed only by a forced re-import that replaces it (matched on UID and identity) or by a manual delete, never by ordinary cleanup.",
-          "Ownership is explicit state, not inferred from object existence during cleanup."
+          "Ownership is explicit state, not inferred from object existence during cleanup.",
+          "STAGE-MANAGED READINESS: a DataVolume produced by harvester-image-tools stage-iso is blank Block (source:{blank:{}}), raw-populated OUT OF BAND, so CDI status.phase==Succeeded means BOUND (empty), not populated. For such a volume (labels stage=true / stage-tag, or any harvester-image-tools/stage-* annotation) readiness gates on harvester-image-tools/stage-complete==\"true\" on its bound PVC, NEVER on CDI phase, or the VM can boot a blank/half-staged CD-ROM; any other DataVolume keeps the ordinary CDI-phase readiness. An optional iso_digest pins harvester-image-tools/stage-content-sha512 and fails closed on mismatch. Ownership is unchanged — the plugin only consumes the volume, never creating, adopting, mutating, or deleting it — and the same gate applies to an extra_media data_volume reference."
         ]
         tags: ["governor", "ownership", "integrity", "lifecycle"]
       }
@@ -223,6 +224,32 @@ Module("KubeVirtISOStaging") {
       iso_url selects a managed CDI HTTP import. Managed-source options (iso_staging_name,
       iso_storage_size, iso_storage_class, iso_checksum, iso_http_secret_ref,
       iso_http_cert_config_map, iso_staging_timeout) apply only with iso_url.
+      iso_digest optionally pins the ISO content SHA-512 for a stage-managed iso_volume_name; it is
+      matched against the volume's harvester-image-tools/stage-content-sha512 marker and is only valid
+      with iso_volume_name (not iso_url, whose integrity is CDI's iso_checksum).
+
+    stage_managed_readiness: |
+      A harvester-image-tools `stage-iso` DataVolume (the air-gapped substitute for
+      `virtctl image-upload`, used where the CDI uploadproxy is unreachable) is created blank Block UP
+      FRONT and raw-populated OUT OF BAND (resumable, sha512-gated dd-over-exec), so its only trustworthy
+      'ready' signal is the completion marker on its bound PVC, NOT the CDI phase:
+        harvester-image-tools/stage-complete       = "true"   # bytes fully staged AND sha512-verified
+        harvester-image-tools/stage-content-sha512 = <hex>    # verified ISO byte digest (SHA-512)
+        harvester-image-tools/stage-bytes          = <n>      # staged byte count
+      CDI status.phase==Succeeded on such a blank Block DV means BOUND (empty), not populated: gating on
+      phase would let the VM boot a blank or half-staged CD-ROM. The builder therefore classifies the
+      volume from cluster state (labels stage=true / stage-tag, or any harvester-image-tools/stage-*
+      annotation) and, when stage-managed, waits for stage-complete before attach, optionally pinning
+      iso_digest to stage-content-sha512 and failing closed on mismatch; otherwise it falls back to
+      CDI-phase readiness. The plugin only CONSUMES the volume (read-only), never creating, importing,
+      adopting, mutating, resizing, or deleting it — identical to the existing iso_volume_name ownership
+      boundary — and in an air-gap it does NOT try to 'fix' a not-ready volume with a cluster pull. This
+      is the plugin-side absorption of the stage-iso producer hand-off; the same gate applies to an
+      extra_media data_volume reference (see KubeVirtExtraMedia). Implemented in
+      builder/kubevirt/common (WaitUntilMediaReady), shared by kubevirt-iso and kubevirt-image.
+      Producers: harvester-image-tools HarvesterImageStageISO (transport + marker); vdi-factory
+      media_staging (assembles + hashes the ISO and drives stage-iso with --sha512 <iso_digest>, the
+      same digest callers can pin here).
 
     out_of_scope: |
       Uploading a local ISO from the Packer host into the cluster is deliberately NOT handled here.

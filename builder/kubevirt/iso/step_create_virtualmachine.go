@@ -107,7 +107,7 @@ func (s *StepCreateVirtualMachine) Run(ctx context.Context, state multistep.Stat
 	virtualMachine.Spec.Template.Spec.Domain.Devices.Disks = append(virtualMachine.Spec.Template.Spec.Domain.Devices.Disks, extraDisks...)
 	virtualMachine.Spec.Template.Spec.Volumes = append(virtualMachine.Spec.Template.Spec.Volumes, extraVolumes...)
 
-	if err := kubevirtcommon.PreflightExtraMedia(ctx, s.Client, namespace, extraMedia); err != nil {
+	if err := kubevirtcommon.PreflightExtraMedia(ctx, s.Client, namespace, extraMedia, ui.Sayf); err != nil {
 		state.Put("error", err)
 		ui.Error(err.Error())
 		return multistep.ActionHalt

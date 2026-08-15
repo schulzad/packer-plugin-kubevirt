@@ -4,6 +4,7 @@
 package iso_test
 
 import (
+	"strings"
 	"time"
 
 	"github.com/hashicorp/packer-plugin-kubevirt/builder/kubevirt/iso"
@@ -166,4 +167,65 @@ var _ = Describe("Config ISO sources", func() {
 
 		Expect(err).To(MatchError(ContainSubstring("reserved")))
 	})
+
+	It("normalizes an iso_digest pin on an existing DataVolume", func() {
+		raw := baseRaw()
+		raw["iso_volume_name"] = "existing"
+		raw["iso_digest"] = "SHA512:" + strings.ToUpper(sampleSHA512)
+		var config iso.Config
+
+		_, err := config.Prepare(raw)
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(config.IsoDigest).To(Equal(sampleSHA512))
+	})
+
+	It("rejects an iso_digest without iso_volume_name", func() {
+		raw := baseRaw()
+		raw["iso_url"] = "https://mirror.example.test/rocky.iso"
+		raw["iso_storage_size"] = "12Gi"
+		raw["iso_digest"] = sampleSHA512
+		var config iso.Config
+
+		_, err := config.Prepare(raw)
+
+		Expect(err).To(MatchError(ContainSubstring("iso_digest is only valid with iso_volume_name")))
+	})
+
+	It("rejects a malformed iso_digest", func() {
+		raw := baseRaw()
+		raw["iso_volume_name"] = "existing"
+		raw["iso_digest"] = "not-a-digest"
+		var config iso.Config
+
+		_, err := config.Prepare(raw)
+
+		Expect(err).To(MatchError(ContainSubstring("iso_digest")))
+	})
+
+	It("accepts and normalizes an extra_media sha512 pin", func() {
+		raw := baseRaw()
+		raw["iso_volume_name"] = "existing"
+		raw["extra_media"] = []map[string]any{{"data_volume": "m", "sha512": strings.ToUpper(sampleSHA512)}}
+		var config iso.Config
+
+		_, err := config.Prepare(raw)
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(config.ExtraMedia[0].SHA512).To(Equal(sampleSHA512))
+	})
+
+	It("rejects a malformed extra_media sha512", func() {
+		raw := baseRaw()
+		raw["iso_volume_name"] = "existing"
+		raw["extra_media"] = []map[string]any{{"data_volume": "m", "sha512": "deadbeef"}}
+		var config iso.Config
+
+		_, err := config.Prepare(raw)
+
+		Expect(err).To(MatchError(ContainSubstring("sha512")))
+	})
 })
+
+const sampleSHA512 = "cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce" +
+	"47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e"

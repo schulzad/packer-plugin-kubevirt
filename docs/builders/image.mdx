@@ -117,6 +117,15 @@ extra_media {
 }
 ```
 
+When a `data_volume` was produced by `harvester-image stage-iso`, the builder
+gates readiness on the `harvester-image-tools/stage-complete` annotation on the
+volume's bound PVC rather than on the CDI phase — a blank Block `stage-iso`
+volume reports `Succeeded` (bound) before its bytes are staged, so trusting the
+phase could attach a blank or half-staged disk. Any other DataVolume falls back
+to ordinary CDI-phase readiness. Optionally set `sha512` on the entry to pin the
+expected SHA-512 against the `harvester-image-tools/stage-content-sha512` marker
+and fail closed on a mismatch.
+
 @include 'builder/kubevirt/image/ExtraMedia-required.mdx'
 
 @include 'builder/kubevirt/image/ExtraMedia-not-required.mdx'

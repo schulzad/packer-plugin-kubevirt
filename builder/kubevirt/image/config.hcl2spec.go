@@ -123,6 +123,7 @@ type FlatExtraMedia struct {
 	As         *string `mapstructure:"as" required:"false" cty:"as" hcl:"as"`
 	Name       *string `mapstructure:"name" required:"false" cty:"name" hcl:"name"`
 	Bus        *string `mapstructure:"bus" required:"false" cty:"bus" hcl:"bus"`
+	SHA512     *string `mapstructure:"sha512" required:"false" cty:"sha512" hcl:"sha512"`
 }
 
 // FlatMapstructure returns a new FlatExtraMedia.
@@ -141,6 +142,7 @@ func (*FlatExtraMedia) HCL2Spec() map[string]hcldec.Spec {
 		"as":          &hcldec.AttrSpec{Name: "as", Type: cty.String, Required: false},
 		"name":        &hcldec.AttrSpec{Name: "name", Type: cty.String, Required: false},
 		"bus":         &hcldec.AttrSpec{Name: "bus", Type: cty.String, Required: false},
+		"sha512":      &hcldec.AttrSpec{Name: "sha512", Type: cty.String, Required: false},
 	}
 	return s
 }

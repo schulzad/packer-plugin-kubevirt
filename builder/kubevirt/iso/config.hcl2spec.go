@@ -24,6 +24,7 @@ type FlatConfig struct {
 	Name                    *string           `mapstructure:"name" required:"true" cty:"name" hcl:"name"`
 	Namespace               *string           `mapstructure:"namespace" required:"true" cty:"namespace" hcl:"namespace"`
 	IsoVolumeName           *string           `mapstructure:"iso_volume_name" required:"false" cty:"iso_volume_name" hcl:"iso_volume_name"`
+	IsoDigest               *string           `mapstructure:"iso_digest" required:"false" cty:"iso_digest" hcl:"iso_digest"`
 	IsoURL                  *string           `mapstructure:"iso_url" required:"false" cty:"iso_url" hcl:"iso_url"`
 	IsoStagingName          *string           `mapstructure:"iso_staging_name" required:"false" cty:"iso_staging_name" hcl:"iso_staging_name"`
 	IsoStorageSize          *string           `mapstructure:"iso_storage_size" required:"false" cty:"iso_storage_size" hcl:"iso_storage_size"`
@@ -93,6 +94,7 @@ func (*FlatConfig) HCL2Spec() map[string]hcldec.Spec {
 		"name":                       &hcldec.AttrSpec{Name: "name", Type: cty.String, Required: false},
 		"namespace":                  &hcldec.AttrSpec{Name: "namespace", Type: cty.String, Required: false},
 		"iso_volume_name":            &hcldec.AttrSpec{Name: "iso_volume_name", Type: cty.String, Required: false},
+		"iso_digest":                 &hcldec.AttrSpec{Name: "iso_digest", Type: cty.String, Required: false},
 		"iso_url":                    &hcldec.AttrSpec{Name: "iso_url", Type: cty.String, Required: false},
 		"iso_staging_name":           &hcldec.AttrSpec{Name: "iso_staging_name", Type: cty.String, Required: false},
 		"iso_storage_size":           &hcldec.AttrSpec{Name: "iso_storage_size", Type: cty.String, Required: false},
@@ -145,6 +147,7 @@ type FlatExtraMedia struct {
 	As         *string `mapstructure:"as" required:"false" cty:"as" hcl:"as"`
 	Name       *string `mapstructure:"name" required:"false" cty:"name" hcl:"name"`
 	Bus        *string `mapstructure:"bus" required:"false" cty:"bus" hcl:"bus"`
+	SHA512     *string `mapstructure:"sha512" required:"false" cty:"sha512" hcl:"sha512"`
 }
 
 // FlatMapstructure returns a new FlatExtraMedia.
@@ -163,6 +166,7 @@ func (*FlatExtraMedia) HCL2Spec() map[string]hcldec.Spec {
 		"as":          &hcldec.AttrSpec{Name: "as", Type: cty.String, Required: false},
 		"name":        &hcldec.AttrSpec{Name: "name", Type: cty.String, Required: false},
 		"bus":         &hcldec.AttrSpec{Name: "bus", Type: cty.String, Required: false},
+		"sha512":      &hcldec.AttrSpec{Name: "sha512", Type: cty.String, Required: false},
 	}
 	return s
 }

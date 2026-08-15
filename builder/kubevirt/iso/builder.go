@@ -82,6 +82,7 @@ func (b *Builder) Run(ctx context.Context, ui packer.Ui, hook packer.Hook) (pack
 		&StepStageISO{
 			Config:  b.config,
 			Manager: &staging.Manager{CDI: b.client.CdiClient()},
+			Client:  b.client,
 		},
 		&StepCopyMediaFiles{
 			Config: b.config,

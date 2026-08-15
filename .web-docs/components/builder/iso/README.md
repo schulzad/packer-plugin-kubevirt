@@ -83,6 +83,20 @@ deletes** a DataVolume supplied through `iso_volume_name`.
 > (e.g. `virtctl image-upload` or a dedicated staging tool). Point
 > `iso_volume_name` at the resulting DataVolume.
 
+### Staged media readiness (air-gapped `stage-iso`)
+
+When `iso_volume_name` (or an `extra_media` `data_volume`) points at a DataVolume
+produced by `harvester-image stage-iso`, the builder gates readiness on the
+`harvester-image-tools/stage-complete` annotation on the volume's bound PVC —
+**not** on the CDI phase. A `stage-iso` DataVolume is a blank Block volume that
+CDI reports as `Succeeded` (bound) *before* its bytes are raw-populated out of
+band, so trusting the phase could boot a blank or half-staged CD-ROM. Any other
+DataVolume falls back to ordinary CDI-phase readiness. Optionally set `iso_digest`
+(or `extra_media { sha512 = ... }`) to pin the expected SHA-512 against the
+`harvester-image-tools/stage-content-sha512` marker and fail closed on a
+mismatch. The builder only consumes the volume; it never creates, mutates, or
+deletes it.
+
 ## Extra Media
 
 Attach additional, read-only media to the temporary build VM — for example a
@@ -118,6 +132,11 @@ extra_media {
 - `name` (string) - Name is the disk device name; a unique name is generated when empty.
 
 - `bus` (string) - Bus is the device bus: "scsi" (default), "sata", "virtio", or "usb".
+
+- `sha512` (string) - SHA512 optionally pins the media content digest. When set and the
+  referenced DataVolume was produced by `harvester-image stage-iso`, it must
+  equal the volume's harvester-image-tools/stage-content-sha512 marker or the
+  build fails closed. Accepts a bare SHA-512 hex digest or a "sha512:"-prefixed one.
 
 <!-- End of code generated from the comments of the ExtraMedia struct in builder/kubevirt/iso/config.go; -->
 
@@ -171,6 +190,13 @@ command versus a plain shutdown — is left entirely to your template.
 - `iso_volume_name` (string) - IsoVolumeName is the name of an existing, user-managed DataVolume that
   contains the installation ISO. Exactly one of iso_volume_name or iso_url
   must be set.
+
+- `iso_digest` (string) - IsoDigest optionally pins the installation ISO's content digest when
+  iso_volume_name references a DataVolume produced by `harvester-image
+  stage-iso`. When set, it must equal the volume's
+  harvester-image-tools/stage-content-sha512 marker or the build fails
+  closed. Accepts a bare SHA-512 hex digest or a "sha512:"-prefixed one.
+  Only valid with iso_volume_name.
 
 - `iso_url` (string) - IsoURL is an HTTP or HTTPS URL that CDI importer pods can reach. The
   builder creates a DataVolume that CDI imports inside the cluster and

@@ -7,9 +7,12 @@ import (
 	"context"
 	"fmt"
 
+	kubevirtcommon "github.com/hashicorp/packer-plugin-kubevirt/builder/kubevirt/common"
 	"github.com/hashicorp/packer-plugin-kubevirt/builder/kubevirt/iso/staging"
 	"github.com/hashicorp/packer-plugin-sdk/multistep"
 	"github.com/hashicorp/packer-plugin-sdk/packer"
+
+	"kubevirt.io/client-go/kubecli"
 )
 
 const (
@@ -24,6 +27,7 @@ const (
 type StepStageISO struct {
 	Config  Config
 	Manager *staging.Manager
+	Client  kubecli.KubevirtClient
 }
 
 func (s *StepStageISO) Run(ctx context.Context, state multistep.StateBag) multistep.StepAction {
@@ -54,6 +58,24 @@ func (s *StepStageISO) Run(ctx context.Context, state multistep.StateBag) multis
 		state.Put("error", err)
 		ui.Error(err.Error())
 		return multistep.ActionHalt
+	}
+
+	// An externally owned DataVolume may have been produced by `harvester-image
+	// stage-iso`, which raw-populates a blank Block volume out of band: it reads
+	// CDI phase Succeeded once bound, before its bytes are staged. Gate on the
+	// stage-complete marker (falling back to CDI phase for a non-stage volume)
+	// so the VM never boots a blank or half-staged CD-ROM. Managed HTTP imports
+	// are already fully waited on by the staging manager.
+	if result.Kind == staging.SourceExisting && s.Client != nil {
+		if err := kubevirtcommon.WaitUntilMediaReady(ctx, s.Client, s.Config.Namespace, result.VolumeName, kubevirtcommon.MediaReadyOptions{
+			ExpectedSHA512: s.Config.IsoDigest,
+			Timeout:        s.Config.IsoStagingTimeout,
+			Progress:       ui.Sayf,
+		}); err != nil {
+			state.Put("error", err)
+			ui.Error(err.Error())
+			return multistep.ActionHalt
+		}
 	}
 
 	state.Put(stateISOVolumeName, result.VolumeName)

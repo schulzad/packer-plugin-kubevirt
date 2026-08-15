@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	kubevirtcommon "github.com/hashicorp/packer-plugin-kubevirt/builder/kubevirt/common"
 	"github.com/hashicorp/packer-plugin-sdk/common"
 	"github.com/hashicorp/packer-plugin-sdk/shutdowncommand"
 	"github.com/hashicorp/packer-plugin-sdk/template/config"
@@ -80,6 +81,11 @@ type ExtraMedia struct {
 	Name string `mapstructure:"name" required:"false"`
 	// Bus is the device bus: "scsi" (default), "sata", "virtio", or "usb".
 	Bus string `mapstructure:"bus" required:"false"`
+	// SHA512 optionally pins the media content digest. When set and the
+	// referenced DataVolume was produced by `harvester-image stage-iso`, it must
+	// equal the volume's harvester-image-tools/stage-content-sha512 marker or the
+	// build fails closed. Accepts a bare SHA-512 hex digest or a "sha512:"-prefixed one.
+	SHA512 string `mapstructure:"sha512" required:"false"`
 }
 
 type Config struct {
@@ -100,6 +106,13 @@ type Config struct {
 	// contains the installation ISO. Exactly one of iso_volume_name or iso_url
 	// must be set.
 	IsoVolumeName string `mapstructure:"iso_volume_name" required:"false"`
+	// IsoDigest optionally pins the installation ISO's content digest when
+	// iso_volume_name references a DataVolume produced by `harvester-image
+	// stage-iso`. When set, it must equal the volume's
+	// harvester-image-tools/stage-content-sha512 marker or the build fails
+	// closed. Accepts a bare SHA-512 hex digest or a "sha512:"-prefixed one.
+	// Only valid with iso_volume_name.
+	IsoDigest string `mapstructure:"iso_digest" required:"false"`
 	// IsoURL is an HTTP or HTTPS URL that CDI importer pods can reach. The
 	// builder creates a DataVolume that CDI imports inside the cluster and
 	// keeps it after the build so later runs reuse the (often multi-GB) import;
@@ -263,6 +276,16 @@ func (c *Config) Prepare(raws ...interface{}) ([]string, error) {
 	if c.IsoVolumeName == c.Name || c.IsoVolumeName == c.Name+"-rootdisk" {
 		return nil, fmt.Errorf("iso_volume_name must not collide with the output or temporary root-disk name")
 	}
+	if c.IsoDigest != "" {
+		if c.IsoVolumeName == "" {
+			return nil, fmt.Errorf("iso_digest is only valid with iso_volume_name")
+		}
+		normalized, digestErr := kubevirtcommon.NormalizeSHA512(c.IsoDigest)
+		if digestErr != nil {
+			return nil, fmt.Errorf("iso_digest: %w", digestErr)
+		}
+		c.IsoDigest = normalized
+	}
 
 	if c.IsoURL == "" {
 		if c.IsoStagingName != "" || c.IsoStorageSize != "" || c.IsoStorageClass != "" ||
@@ -363,6 +386,13 @@ func validateExtraMedia(items []ExtraMedia) error {
 		case "", "scsi", "sata", "virtio", "usb":
 		default:
 			return fmt.Errorf("extra_media[%d]: bus must be scsi, sata, virtio, or usb", i)
+		}
+		if strings.TrimSpace(m.SHA512) != "" {
+			normalized, err := kubevirtcommon.NormalizeSHA512(m.SHA512)
+			if err != nil {
+				return fmt.Errorf("extra_media[%d]: sha512: %w", i, err)
+			}
+			items[i].SHA512 = normalized
 		}
 		if m.Name != "" {
 			if reserved[m.Name] {

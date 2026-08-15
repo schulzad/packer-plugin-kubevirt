@@ -95,6 +95,20 @@ deletes** a DataVolume supplied through `iso_volume_name`.
 > (e.g. `virtctl image-upload` or a dedicated staging tool). Point
 > `iso_volume_name` at the resulting DataVolume.
 
+### Staged media readiness (air-gapped `stage-iso`)
+
+When `iso_volume_name` (or an `extra_media` `data_volume`) points at a DataVolume
+produced by `harvester-image stage-iso`, the builder gates readiness on the
+`harvester-image-tools/stage-complete` annotation on the volume's bound PVC —
+**not** on the CDI phase. A `stage-iso` DataVolume is a blank Block volume that
+CDI reports as `Succeeded` (bound) *before* its bytes are raw-populated out of
+band, so trusting the phase could boot a blank or half-staged CD-ROM. Any other
+DataVolume falls back to ordinary CDI-phase readiness. Optionally set `iso_digest`
+(or `extra_media { sha512 = ... }`) to pin the expected SHA-512 against the
+`harvester-image-tools/stage-content-sha512` marker and fail closed on a
+mismatch. The builder only consumes the volume; it never creates, mutates, or
+deletes it.
+
 ## Extra Media
 
 Attach additional, read-only media to the temporary build VM — for example a

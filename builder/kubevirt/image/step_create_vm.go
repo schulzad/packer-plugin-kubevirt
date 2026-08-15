@@ -60,7 +60,7 @@ func (s *StepCreateVM) Run(ctx context.Context, state multistep.StateBag) multis
 	virtualMachine.Spec.Template.Spec.Domain.Devices.Disks = append(virtualMachine.Spec.Template.Spec.Domain.Devices.Disks, extraDisks...)
 	virtualMachine.Spec.Template.Spec.Volumes = append(virtualMachine.Spec.Template.Spec.Volumes, extraVolumes...)
 
-	if err := kubevirtcommon.PreflightExtraMedia(ctx, s.Client, namespace, extraMedia); err != nil {
+	if err := kubevirtcommon.PreflightExtraMedia(ctx, s.Client, namespace, extraMedia, ui.Sayf); err != nil {
 		state.Put("error", err)
 		ui.Error(err.Error())
 		return multistep.ActionHalt
@@ -302,6 +302,7 @@ func extraMediaAttachments(items []ExtraMedia) []kubevirtcommon.ExtraMediaAttach
 			As:         m.As,
 			Name:       m.Name,
 			Bus:        m.Bus,
+			SHA512:     m.SHA512,
 		}
 	}
 	return out

@@ -99,6 +99,7 @@ func (s *StepCreateVirtualMachine) Run(ctx context.Context, state multistep.Stat
 		cpuThreads,
 		memory,
 		s.Config.ShutdownCommand,
+		s.Config.WaitForShutdown,
 		networks,
 		forwardPorts)
 

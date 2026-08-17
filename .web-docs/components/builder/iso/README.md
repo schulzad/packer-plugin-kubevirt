@@ -162,6 +162,29 @@ and re-specialize it.) A crash during provisioning is still retried. Deciding
 *what* to run — for example a `seal` template variable that selects a Sysprep
 command versus a plain shutdown — is left entirely to your template.
 
+## Unattended Installs Without a Communicator
+
+For appliances or kickstart installs that finish by powering the guest **off** —
+with no SSH/WinRM to connect to and provision — set `wait_for_shutdown = true`.
+Instead of unconditionally sleeping `installation_wait_timeout`, the builder
+watches the temporary VM and captures the disk the moment the guest powers itself
+off, bounded by `installation_wait_timeout`. The VM runs with
+`RunStrategy=RerunOnFailure`, so a clean self-power-off stays down (a crash
+mid-install is still retried rather than captured).
+
+```hcl
+iso_volume_name           = "appliance-install-iso"
+boot_command              = ["<enter>"] # drive the installer over VNC
+installation_wait_timeout = "3h"        # upper bound on the wait for power-off
+wait_for_shutdown         = true
+# no communicator: the install is driven entirely by boot_command
+```
+
+The guest must **power off** (not reboot) at the end of the install; a reboot
+looks like "still running" and will ride out the timeout. `wait_for_shutdown` is
+the no-communicator sibling of `shutdown_command` and cannot be combined with an
+`ssh` or `winrm` communicator.
+
 ## KubeVirt-ISO Builder Configuration Reference
 
 ### Required Configuration
@@ -179,6 +202,8 @@ command versus a plain shutdown — is left entirely to your template.
 - `preference` (string) - Preference is the name of the Preference resource to use in the temporary VM.
 
 - `installation_wait_timeout` (duration string | ex: "1h5m2s") - InstallationWaitTimeout is the amount of time to wait for the installation to be completed.
+  When wait_for_shutdown is set it bounds the wait for the guest to power itself off, rather
+  than being an unconditional sleep.
 
 <!-- End of code generated from the comments of the Config struct in builder/kubevirt/iso/config.go; -->
 
@@ -277,6 +302,16 @@ command versus a plain shutdown — is left entirely to your template.
 
 - `boot_wait` (duration string | ex: "1h5m2s") - BootWait is the amount of time to wait before sending the boot command.
   This is useful if the VM takes some time to boot and be ready to accept keystrokes.
+
+- `wait_for_shutdown` (bool) - WaitForShutdown captures the image the moment the guest powers ITSELF off
+  (for example an appliance or kickstart install that ends in `poweroff`)
+  instead of unconditionally sleeping installation_wait_timeout. It targets
+  no-communicator installs driven purely by boot_command: the temporary VM
+  runs with RunStrategy=RerunOnFailure so a clean self-power-off stays down
+  (a crash is still retried). The guest must power OFF, not reboot, at the end
+  of the install; installation_wait_timeout bounds the wait. This is the
+  no-communicator sibling of shutdown_command and cannot be combined with an
+  ssh or winrm communicator.
 
 - `communicator` (string) - Communicator is the type of communicator to use to connect to the VM.
   Supported values are "ssh" and "winrm".

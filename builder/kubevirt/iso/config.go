@@ -198,7 +198,19 @@ type Config struct {
 	// This is useful if the VM takes some time to boot and be ready to accept keystrokes.
 	BootWait time.Duration `mapstructure:"boot_wait" required:"false"`
 	// InstallationWaitTimeout is the amount of time to wait for the installation to be completed.
+	// When wait_for_shutdown is set it bounds the wait for the guest to power itself off, rather
+	// than being an unconditional sleep.
 	InstallationWaitTimeout time.Duration `mapstructure:"installation_wait_timeout" required:"true"`
+	// WaitForShutdown captures the image the moment the guest powers ITSELF off
+	// (for example an appliance or kickstart install that ends in `poweroff`)
+	// instead of unconditionally sleeping installation_wait_timeout. It targets
+	// no-communicator installs driven purely by boot_command: the temporary VM
+	// runs with RunStrategy=RerunOnFailure so a clean self-power-off stays down
+	// (a crash is still retried). The guest must power OFF, not reboot, at the end
+	// of the install; installation_wait_timeout bounds the wait. This is the
+	// no-communicator sibling of shutdown_command and cannot be combined with an
+	// ssh or winrm communicator.
+	WaitForShutdown bool `mapstructure:"wait_for_shutdown" required:"false"`
 	// Communicator is the type of communicator to use to connect to the VM.
 	// Supported values are "ssh" and "winrm".
 	Communicator string `mapstructure:"communicator" required:"false"`
@@ -355,6 +367,9 @@ func (c *Config) Prepare(raws ...interface{}) ([]string, error) {
 	if strings.TrimSpace(c.ShutdownCommand) != "" &&
 		c.Communicator != "ssh" && c.Communicator != "winrm" {
 		return nil, fmt.Errorf("shutdown_command requires an ssh or winrm communicator")
+	}
+	if c.WaitForShutdown && (c.Communicator == "ssh" || c.Communicator == "winrm") {
+		return nil, fmt.Errorf("wait_for_shutdown is for no-communicator installs and cannot be combined with an ssh or winrm communicator; use shutdown_command instead")
 	}
 
 	for _, n := range c.Networks {

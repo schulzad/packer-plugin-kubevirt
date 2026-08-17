@@ -195,7 +195,7 @@ func imageVirtualMachine(c Config, forwardPorts []v1.Port) *v1.VirtualMachine {
 		},
 		ObjectMeta: metav1.ObjectMeta{Name: c.Name},
 		Spec: v1.VirtualMachineSpec{
-			RunStrategy: ptr.To(kubevirtcommon.RunStrategyForShutdownCommand(c.ShutdownCommand)),
+			RunStrategy: ptr.To(kubevirtcommon.RunStrategyForSelfPowerOff(c.ShutdownCommand, false)),
 			DataVolumeTemplates: []v1.DataVolumeTemplateSpec{
 				{
 					ObjectMeta: metav1.ObjectMeta{Name: c.Name + "-rootdisk"},

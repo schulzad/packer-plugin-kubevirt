@@ -91,6 +91,16 @@
 - `boot_wait` (duration string | ex: "1h5m2s") - BootWait is the amount of time to wait before sending the boot command.
   This is useful if the VM takes some time to boot and be ready to accept keystrokes.
 
+- `wait_for_shutdown` (bool) - WaitForShutdown captures the image the moment the guest powers ITSELF off
+  (for example an appliance or kickstart install that ends in `poweroff`)
+  instead of unconditionally sleeping installation_wait_timeout. It targets
+  no-communicator installs driven purely by boot_command: the temporary VM
+  runs with RunStrategy=RerunOnFailure so a clean self-power-off stays down
+  (a crash is still retried). The guest must power OFF, not reboot, at the end
+  of the install; installation_wait_timeout bounds the wait. This is the
+  no-communicator sibling of shutdown_command and cannot be combined with an
+  ssh or winrm communicator.
+
 - `communicator` (string) - Communicator is the type of communicator to use to connect to the VM.
   Supported values are "ssh" and "winrm".
 

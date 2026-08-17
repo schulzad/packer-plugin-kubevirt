@@ -225,6 +225,30 @@ var _ = Describe("Config ISO sources", func() {
 
 		Expect(err).To(MatchError(ContainSubstring("sha512")))
 	})
+
+	It("accepts wait_for_shutdown for a no-communicator install", func() {
+		raw := baseRaw()
+		raw["iso_volume_name"] = "existing"
+		raw["wait_for_shutdown"] = true
+		var config iso.Config
+
+		_, err := config.Prepare(raw)
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(config.WaitForShutdown).To(BeTrue())
+	})
+
+	It("rejects wait_for_shutdown combined with an ssh communicator", func() {
+		raw := baseRaw()
+		raw["iso_volume_name"] = "existing"
+		raw["wait_for_shutdown"] = true
+		raw["communicator"] = "ssh"
+		var config iso.Config
+
+		_, err := config.Prepare(raw)
+
+		Expect(err).To(MatchError(ContainSubstring("wait_for_shutdown")))
+	})
 })
 
 const sampleSHA512 = "cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce" +

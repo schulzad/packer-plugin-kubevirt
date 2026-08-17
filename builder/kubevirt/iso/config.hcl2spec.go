@@ -51,6 +51,7 @@ type FlatConfig struct {
 	BootCommand             []string          `mapstructure:"boot_command" required:"false" cty:"boot_command" hcl:"boot_command"`
 	BootWait                *string           `mapstructure:"boot_wait" required:"false" cty:"boot_wait" hcl:"boot_wait"`
 	InstallationWaitTimeout *string           `mapstructure:"installation_wait_timeout" required:"true" cty:"installation_wait_timeout" hcl:"installation_wait_timeout"`
+	WaitForShutdown         *bool             `mapstructure:"wait_for_shutdown" required:"false" cty:"wait_for_shutdown" hcl:"wait_for_shutdown"`
 	Communicator            *string           `mapstructure:"communicator" required:"false" cty:"communicator" hcl:"communicator"`
 	SSHHost                 *string           `mapstructure:"ssh_host" required:"false" cty:"ssh_host" hcl:"ssh_host"`
 	SSHLocalPort            *int              `mapstructure:"ssh_local_port" required:"false" cty:"ssh_local_port" hcl:"ssh_local_port"`
@@ -121,6 +122,7 @@ func (*FlatConfig) HCL2Spec() map[string]hcldec.Spec {
 		"boot_command":               &hcldec.AttrSpec{Name: "boot_command", Type: cty.List(cty.String), Required: false},
 		"boot_wait":                  &hcldec.AttrSpec{Name: "boot_wait", Type: cty.String, Required: false},
 		"installation_wait_timeout":  &hcldec.AttrSpec{Name: "installation_wait_timeout", Type: cty.String, Required: false},
+		"wait_for_shutdown":          &hcldec.AttrSpec{Name: "wait_for_shutdown", Type: cty.Bool, Required: false},
 		"communicator":               &hcldec.AttrSpec{Name: "communicator", Type: cty.String, Required: false},
 		"ssh_host":                   &hcldec.AttrSpec{Name: "ssh_host", Type: cty.String, Required: false},
 		"ssh_local_port":             &hcldec.AttrSpec{Name: "ssh_local_port", Type: cty.Number, Required: false},

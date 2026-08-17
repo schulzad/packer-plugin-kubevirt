@@ -58,6 +58,7 @@ func virtualMachine(
 	cpuThreads uint32,
 	memory string,
 	shutdownCommand string,
+	waitForShutdown bool,
 	networks []Network,
 	forwardPorts []v1.Port) *v1.VirtualMachine {
 	var disks []v1.Disk
@@ -97,7 +98,7 @@ func virtualMachine(
 			Name: name,
 		},
 		Spec: v1.VirtualMachineSpec{
-			RunStrategy: ptr.To(kubevirtcommon.RunStrategyForShutdownCommand(shutdownCommand)),
+			RunStrategy: ptr.To(kubevirtcommon.RunStrategyForSelfPowerOff(shutdownCommand, waitForShutdown)),
 			DataVolumeTemplates: []v1.DataVolumeTemplateSpec{
 				{
 					ObjectMeta: metav1.ObjectMeta{

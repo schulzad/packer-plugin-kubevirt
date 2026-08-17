@@ -181,14 +181,52 @@ func TestShutdownToleratesDisconnectExitStatus(t *testing.T) {
 	}
 }
 
-func TestRunStrategyForShutdownCommand(t *testing.T) {
-	if got := RunStrategyForShutdownCommand(""); got != v1.RunStrategyAlways {
-		t.Errorf("empty command run strategy = %v, want Always", got)
+func TestRunStrategyForSelfPowerOff(t *testing.T) {
+	if got := RunStrategyForSelfPowerOff("", false); got != v1.RunStrategyAlways {
+		t.Errorf("no command / no wait run strategy = %v, want Always", got)
 	}
-	if got := RunStrategyForShutdownCommand("  "); got != v1.RunStrategyAlways {
+	if got := RunStrategyForSelfPowerOff("  ", false); got != v1.RunStrategyAlways {
 		t.Errorf("whitespace command run strategy = %v, want Always", got)
 	}
-	if got := RunStrategyForShutdownCommand("sysprep"); got != v1.RunStrategyRerunOnFailure {
+	if got := RunStrategyForSelfPowerOff("sysprep", false); got != v1.RunStrategyRerunOnFailure {
 		t.Errorf("command run strategy = %v, want RerunOnFailure", got)
+	}
+	if got := RunStrategyForSelfPowerOff("", true); got != v1.RunStrategyRerunOnFailure {
+		t.Errorf("wait_for_shutdown run strategy = %v, want RerunOnFailure", got)
+	}
+}
+
+func TestWaitForGuestPowerOff(t *testing.T) {
+	cs := kubevirtfake.NewSimpleClientset()
+	createVM(t, cs, v1.VirtualMachineStatusRunning)
+	createVMI(t, cs, v1.Succeeded)
+	if err := WaitForGuestPowerOff(context.Background(), shutdownClient{cs: cs}, testNamespace, testVMName, 2*time.Second, 5*time.Millisecond, nil); err != nil {
+		t.Fatalf("expected a clean power-off to be detected, got %v", err)
+	}
+}
+
+func TestWaitForGuestPowerOffStoppedNoVMI(t *testing.T) {
+	cs := kubevirtfake.NewSimpleClientset()
+	createVM(t, cs, v1.VirtualMachineStatusStopped) // no VMI created
+	if err := WaitForGuestPowerOff(context.Background(), shutdownClient{cs: cs}, testNamespace, testVMName, 2*time.Second, 5*time.Millisecond, nil); err != nil {
+		t.Fatalf("VMI-gone + VM Stopped should count as powered off, got %v", err)
+	}
+}
+
+func TestWaitForGuestPowerOffTimesOut(t *testing.T) {
+	cs := kubevirtfake.NewSimpleClientset()
+	createVM(t, cs, v1.VirtualMachineStatusRunning)
+	createVMI(t, cs, v1.Running)
+	if err := WaitForGuestPowerOff(context.Background(), shutdownClient{cs: cs}, testNamespace, testVMName, 50*time.Millisecond, 5*time.Millisecond, nil); err == nil {
+		t.Fatal("expected a timeout while the guest stays running")
+	}
+}
+
+func TestWaitForGuestPowerOffFailsOnVMIFailed(t *testing.T) {
+	cs := kubevirtfake.NewSimpleClientset()
+	createVM(t, cs, v1.VirtualMachineStatusRunning)
+	createVMI(t, cs, v1.Failed)
+	if err := WaitForGuestPowerOff(context.Background(), shutdownClient{cs: cs}, testNamespace, testVMName, 2*time.Second, 5*time.Millisecond, nil); err == nil {
+		t.Fatal("expected a Failed VMI to error instead of counting as powered off")
 	}
 }

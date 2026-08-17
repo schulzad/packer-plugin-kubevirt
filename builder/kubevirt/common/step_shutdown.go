@@ -79,13 +79,9 @@ func (s *StepShutdown) Run(ctx context.Context, state multistep.StateBag) multis
 	if timeout <= 0 {
 		timeout = 5 * time.Minute
 	}
-	pollInterval := s.PollInterval
-	if pollInterval <= 0 {
-		pollInterval = defaultShutdownPollInterval
-	}
 
 	ui.Sayf("Waiting up to %s for VirtualMachine %s/%s to shut down...", timeout, s.Namespace, s.Name)
-	err := wait.PollUntilContextTimeout(ctx, pollInterval, timeout, true, s.guestPoweredOff)
+	err := WaitForGuestPowerOff(ctx, s.Client, s.Namespace, s.Name, timeout, s.PollInterval, ui.Sayf)
 	if err != nil {
 		if commandErr != nil {
 			err = fmt.Errorf(
@@ -111,13 +107,36 @@ func (s *StepShutdown) Run(ctx context.Context, state multistep.StateBag) multis
 	return multistep.ActionContinue
 }
 
-func (s *StepShutdown) guestPoweredOff(ctx context.Context) (bool, error) {
-	vm, err := s.Client.VirtualMachine(s.Namespace).Get(ctx, s.Name, metav1.GetOptions{})
+// WaitForGuestPowerOff blocks until the guest powers itself off (VMI Succeeded,
+// or the VMI is gone and the VM is Stopped), failing if the VMI enters Failed
+// (which RerunOnFailure would restart, racing a live-disk capture). It is shared
+// by the shutdown_command path and the no-communicator wait_for_shutdown install
+// path. progress, when set, receives a throttled heartbeat during long waits.
+func WaitForGuestPowerOff(ctx context.Context, client ShutdownClient, namespace, name string, timeout, pollInterval time.Duration, progress func(format string, args ...any)) error {
+	if pollInterval <= 0 {
+		pollInterval = defaultShutdownPollInterval
+	}
+	var lastReportedAt time.Time
+	return wait.PollUntilContextTimeout(ctx, pollInterval, timeout, true, func(ctx context.Context) (bool, error) {
+		done, err := guestPoweredOff(ctx, client, namespace, name)
+		if err != nil || done {
+			return done, err
+		}
+		if progress != nil && time.Since(lastReportedAt) >= time.Minute {
+			progress("Still waiting for VirtualMachine %s/%s to power off...", namespace, name)
+			lastReportedAt = time.Now()
+		}
+		return false, nil
+	})
+}
+
+func guestPoweredOff(ctx context.Context, client ShutdownClient, namespace, name string) (bool, error) {
+	vm, err := client.VirtualMachine(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
-		return false, fmt.Errorf("get VirtualMachine %s/%s while waiting for shutdown: %w", s.Namespace, s.Name, err)
+		return false, fmt.Errorf("get VirtualMachine %s/%s while waiting for shutdown: %w", namespace, name, err)
 	}
 
-	vmi, err := s.Client.VirtualMachineInstance(s.Namespace).Get(ctx, s.Name, metav1.GetOptions{})
+	vmi, err := client.VirtualMachineInstance(namespace).Get(ctx, name, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
 		// Do not accept VMI absence alone: RerunOnFailure may briefly have no
 		// VMI while replacing a failed one. The VM's stopped status confirms a
@@ -125,7 +144,7 @@ func (s *StepShutdown) guestPoweredOff(ctx context.Context) (bool, error) {
 		return vm.Status.PrintableStatus == v1.VirtualMachineStatusStopped, nil
 	}
 	if err != nil {
-		return false, fmt.Errorf("get VirtualMachineInstance %s/%s while waiting for shutdown: %w", s.Namespace, s.Name, err)
+		return false, fmt.Errorf("get VirtualMachineInstance %s/%s while waiting for shutdown: %w", namespace, name, err)
 	}
 
 	switch vmi.Status.Phase {
@@ -136,7 +155,7 @@ func (s *StepShutdown) guestPoweredOff(ctx context.Context) (bool, error) {
 		// powered off would race that restart and could capture a live disk.
 		return false, fmt.Errorf(
 			"VirtualMachineInstance %s/%s entered Failed phase instead of shutting down cleanly",
-			s.Namespace, s.Name,
+			namespace, name,
 		)
 	default:
 		return false, nil
@@ -151,11 +170,15 @@ func (s *StepShutdown) halt(state multistep.StateBag, ui packer.Ui, err error) m
 
 func (s *StepShutdown) Cleanup(multistep.StateBag) {}
 
-// RunStrategyForShutdownCommand keeps the historical Always behavior unless a
-// guest shutdown command is configured. RerunOnFailure still starts the VM and
-// restarts crashes, but a clean guest power-off remains stopped for capture.
-func RunStrategyForShutdownCommand(command string) v1.VirtualMachineRunStrategy {
-	if strings.TrimSpace(command) != "" {
+// RunStrategyForSelfPowerOff keeps the historical Always behavior unless the
+// build expects the guest to power ITSELF off -- either after a shutdown_command
+// or during a no-communicator install with wait_for_shutdown. In those cases
+// RerunOnFailure still starts the VM and restarts crashes, but a clean guest
+// power-off remains stopped for capture (Always would auto-restart it, e.g.
+// re-running a just-generalized Windows image through OOBE, or rebooting an
+// appliance back into its installer).
+func RunStrategyForSelfPowerOff(shutdownCommand string, waitForShutdown bool) v1.VirtualMachineRunStrategy {
+	if strings.TrimSpace(shutdownCommand) != "" || waitForShutdown {
 		return v1.RunStrategyRerunOnFailure
 	}
 	return v1.RunStrategyAlways
